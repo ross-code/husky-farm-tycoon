@@ -1,0 +1,12 @@
+{
+  "name": "husky-farm-tycoon",
+  "version": "1.0.0",
+  "description": "A cozy top-down husky farm tycoon in the Elvis husky-game canon. Build a farm, raise and breed huskies, send sled teams on missions. HTML5 Canvas, vanilla JS, no build step.",
+  "type": "module",
+  "scripts": {
+    "dev": "python3 -m http.server 5174",
+    "start": "python3 -m http.server 5174"
+  },
+  "keywords": ["game", "canvas", "tycoon", "husky", "sled-dog", "elvis", "simulation"],
+  "license": "MIT"
+}

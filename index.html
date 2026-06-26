@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#0a1730" />
+<title>Husky Farm Tycoon</title>
+<meta name="description" content="Build a snowy husky farm, raise and breed sled dogs, send teams on missions, and welcome tourists. A cozy browser tycoon in the Elvis husky-game canon." />
+<link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <!-- The game world is drawn here. render.js sets the backing-store size; CSS scales it to fit. -->
+  <div id="stage">
+    <canvas id="game"></canvas>
+  </div>
+
+  <!-- Persistent HUD + panels (populated by ui.js) -->
+  <header id="topbar" class="topbar"></header>
+  <aside id="sidebar" class="sidebar"></aside>
+  <nav id="bottombar" class="bottombar"></nav>
+
+  <div id="toasts" class="toasts"></div>
+  <div id="modal-root"></div>
+
+  <!-- Start / title screen -->
+  <div id="start" class="start">
+    <div class="start-card">
+      <div class="start-emoji">🐺❄️</div>
+      <h1>Husky Farm Tycoon</h1>
+      <p class="start-tag">Build the farm. Raise the pack. Run the snow.</p>
+      <div class="start-buttons">
+        <button id="btn-new" class="btn btn-primary">New Farm</button>
+        <button id="btn-continue" class="btn">Continue</button>
+      </div>
+      <p class="start-hint">A cozy tycoon in the Elvis husky-game canon.</p>
+    </div>
+  </div>
+
+  <!-- Boot splash, hidden once the first frame renders -->
+  <div id="boot" class="boot"><div class="boot-dog">🐺</div><div class="boot-text">Warming up the kennels…</div></div>
+
+  <script type="module" src="./src/game.js"></script>
+</body>
+</html>
