@@ -4,7 +4,7 @@
 import { S, newGame, loadGame, hasSave, saveGame, toast } from './state.js';
 import * as C from './config.js';
 import { tickEconomy, dailyUpkeep, computeAppeal } from './economy.js';
-import { tickDogs } from './dogs.js';
+import { tickDogs, dailyHealthCheck } from './dogs.js';
 import { tickMissions, rollAvailable } from './missions.js';
 import { tickEntities } from './entities.js';
 import { initRender, render } from './render.js';
@@ -16,6 +16,7 @@ let last = 0, running = false, autosaveAcc = 0;
 
 function onNewDay() {
   dailyUpkeep();
+  dailyHealthCheck();
   rollAvailable();
   saveGame();
 }

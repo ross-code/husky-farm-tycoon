@@ -92,69 +92,197 @@ function buildGround() {
 }
 
 // ---- buildings ----------------------------------------------------------
+const isNight = () => S.time.tod >= C.ECONOMY.dayFraction;
+const sign = (g, cx, cy, size) => { if (!g) return; ctx.font = `${size}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(g, cx, cy); };
+
+// Dispatch each building to a type-specific drawer so they read distinctly.
 function drawBuilding(b) {
   const def = C.BUILDINGS[b.key]; if (!def) return;
   const t = S.grid.tile;
   const x = b.gx * t, y = b.gy * t, w = b.w * t, h = b.h * t;
 
-  if (def.category === 'decor' && (b.key === 'path_tile')) {
-    // path tiles drawn separately in drawPaths
-    return;
+  if (def.category === 'decor') {
+    if (b.key === 'path_tile') return; // drawn in drawPaths
+    return drawDecor(b, def, x, y, w, h);
   }
 
-  // apron (dug-out ring grounds the building)
+  // shared apron + contact shadow ground every structure
   ctx.fillStyle = withAlpha(col('snowShadeDeep'), 0.5);
   roundRect(ctx, x + 3, y + h * 0.34, w - 6, h * 0.66 + 4, 8); ctx.fill();
-
-  if (def.category === 'decor') return drawDecor(b, def, x, y, w, h);
-
-  // contact shadow
   ctx.fillStyle = withAlpha('#2A3550', 0.18);
   roundRect(ctx, x + 6, y + h - 8, w - 8, 10, 6); ctx.fill();
 
-  // walls
-  const wallTop = y + h * 0.42;
-  const wallH = h * 0.58 - 6;
-  ctx.fillStyle = col('wood');
-  roundRect(ctx, x + 5, wallTop, w - 10, wallH, 6); ctx.fill();
-  ctx.fillStyle = withAlpha(col('woodHi'), 0.5);
-  roundRect(ctx, x + 5, wallTop, w - 10, wallH * 0.4, 6); ctx.fill();
-  // log seams
+  switch (def.category) {
+    case 'training': return drawYard(x, y, w, h, def);
+    case 'kennel': return drawKennel(x, y, w, h, def);
+    case 'food': return drawBarn(x, y, w, h, def);
+    case 'medical': return drawClinic(x, y, w, h, def);
+    case 'breeding': return drawCabin(x, y, w, h, def, { signGlyph: '💕' });
+    case 'house': return drawCabin(x, y, w, h, def, { chimney: true, flag: true });
+    case 'tourist':
+      if (def.key === 'overlook_deck') return drawDeck(x, y, w, h, def);
+      if (def.key === 'storytellers_fire') return drawFirepit(x, y, w, h, def);
+      if (def.key === 'pawprint_point') return drawPhotoSpot(x, y, w, h, def);
+      if (def.key === 'trading_post') return drawShop(x, y, w, h, def);
+      if (def.key === 'cocoa_cabin') return drawCabin(x, y, w, h, def, { steam: true });
+      return drawCabin(x, y, w, h, def);
+    default: return drawCabin(x, y, w, h, def);
+  }
+}
+
+// A log cabin (house / breeding den / cafe / generic). opts: {chimney, flag, steam, signGlyph}
+function drawCabin(x, y, w, h, def, opts = {}) {
+  const wallTop = y + h * 0.42, wallH = h * 0.58 - 6;
+  ctx.fillStyle = col('wood'); roundRect(ctx, x + 5, wallTop, w - 10, wallH, 6); ctx.fill();
+  ctx.fillStyle = withAlpha(col('woodHi'), 0.5); roundRect(ctx, x + 5, wallTop, w - 10, wallH * 0.4, 6); ctx.fill();
   ctx.strokeStyle = withAlpha(col('woodDk'), 0.4); ctx.lineWidth = 1;
   for (let ly = wallTop + 8; ly < wallTop + wallH - 4; ly += 8) { ctx.beginPath(); ctx.moveTo(x + 7, ly); ctx.lineTo(x + w - 7, ly); ctx.stroke(); }
-
-  // roof (gable)
-  const roofC = col(def.roof || 'roofBlue');
-  ctx.fillStyle = roofC;
-  ctx.beginPath();
-  ctx.moveTo(x + 1, wallTop + 4);
-  ctx.lineTo(x + w / 2, y + h * 0.06);
-  ctx.lineTo(x + w - 1, wallTop + 4);
-  ctx.closePath(); ctx.fill();
-  // roof sun edge + snow cap
+  // gable roof
+  ctx.fillStyle = col(def.roof || 'roofBlue');
+  ctx.beginPath(); ctx.moveTo(x + 1, wallTop + 4); ctx.lineTo(x + w / 2, y + h * 0.06); ctx.lineTo(x + w - 1, wallTop + 4); ctx.closePath(); ctx.fill();
   ctx.fillStyle = withAlpha('#ffffff', 0.18);
   ctx.beginPath(); ctx.moveTo(x + w / 2, y + h * 0.06); ctx.lineTo(x + w - 1, wallTop + 4); ctx.lineTo(x + w * 0.7, wallTop + 4); ctx.closePath(); ctx.fill();
   ctx.fillStyle = col('roofSnow');
   ctx.beginPath(); ctx.moveTo(x + w / 2, y + h * 0.06); ctx.lineTo(x + w / 2 + 7, y + h * 0.10); ctx.lineTo(x + w / 2 - 7, y + h * 0.10); ctx.closePath(); ctx.fill();
-
+  if (opts.chimney) {
+    ctx.fillStyle = col('stone'); roundRect(ctx, x + w * 0.68, y + h * 0.08, 8, h * 0.3, 2); ctx.fill();
+    if (isNight()) { ctx.fillStyle = withAlpha('#cfd6df', 0.35); for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(x + w * 0.68 + 4, y + h * 0.06 - i * 5, 3 - i * 0.6, 0, 7); ctx.fill(); } }
+  }
+  if (opts.flag) {
+    const fx = x + w / 2, fy = y + h * 0.06;
+    ctx.strokeStyle = col('woodDk'); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx, fy - 13); ctx.stroke();
+    ctx.fillStyle = col('brand'); ctx.beginPath(); ctx.moveTo(fx, fy - 13); ctx.lineTo(fx + 9, fy - 10); ctx.lineTo(fx, fy - 7); ctx.closePath(); ctx.fill();
+  }
+  if (opts.steam) { ctx.fillStyle = withAlpha('#fff', 0.4); for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(x + w * 0.3 + i * 3, wallTop - 4 - i * 4, 3 - i * 0.6, 0, 7); ctx.fill(); } }
   // door
-  const dw = Math.min(14, w * 0.22);
-  ctx.fillStyle = col('woodDk');
+  const dw = Math.min(14, w * 0.22); ctx.fillStyle = col('woodDk');
   roundRect(ctx, x + w / 2 - dw / 2, wallTop + wallH - 18, dw, 18, 3); ctx.fill();
-  // window glow (warm at night)
-  const lit = S.time.tod >= C.ECONOMY.dayFraction;
-  ctx.fillStyle = lit ? withAlpha(col('gold'), 0.9) : '#BFE0F0';
+  // windows
+  ctx.fillStyle = isNight() ? withAlpha(col('gold'), 0.9) : '#BFE0F0';
   roundRect(ctx, x + 9, wallTop + 8, 8, 8, 2); ctx.fill();
   if (w > 70) { roundRect(ctx, x + w - 17, wallTop + 8, 8, 8, 2); ctx.fill(); }
+  ctx.fillStyle = col('ink');
+  sign(opts.signGlyph || def.glyph, x + w / 2, y + h * 0.28, Math.min(22, w * 0.3));
+}
 
-  // category sign glyph
-  if (def.glyph) {
-    ctx.font = `${Math.min(22, w * 0.32)}px serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(def.glyph, x + w / 2, y + h * 0.30);
+// Training: a fenced play yard with a ramp, a jump hoop, and weave poles. No roof.
+function drawYard(x, y, w, h, def) {
+  const top = y + h * 0.3, inH = h - (top - y) - 6;
+  ctx.fillStyle = withAlpha(col('path'), 0.22); roundRect(ctx, x + 4, top, w - 8, inH, 8); ctx.fill();
+  // A-frame ramp (left)
+  ctx.fillStyle = col('roofGreen');
+  ctx.beginPath(); ctx.moveTo(x + 12, y + h - 10); ctx.lineTo(x + 23, top + 10); ctx.lineTo(x + 34, y + h - 10); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = withAlpha('#fff', 0.45); ctx.lineWidth = 1;
+  for (let i = 1; i <= 3; i++) { const ry = top + 10 + (y + h - 10 - (top + 10)) * (i / 4); ctx.beginPath(); ctx.moveTo(x + 12 + (23 - 12) * (i / 4), ry); ctx.lineTo(x + 34 - (34 - 23) * (i / 4), ry); ctx.stroke(); }
+  // jump hoop (right)
+  ctx.strokeStyle = col('brand'); ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(x + w - 24, y + h - 24, 9, 11, 0, 0, 7); ctx.stroke();
+  ctx.strokeStyle = col('brandDeep'); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x + w - 24, y + h - 13); ctx.lineTo(x + w - 24, y + h - 7); ctx.stroke();
+  // weave poles (center)
+  ctx.fillStyle = col('teal'); for (let i = 0; i < 3; i++) { roundRect(ctx, x + w / 2 - 9 + i * 7, y + h - 26, 3, 19, 1.5); ctx.fill(); }
+  // perimeter fence
+  drawFence(x + 3, top - 2, w - 6, inH + 2);
+  ctx.fillStyle = col('ink'); sign(def.glyph, x + w / 2, y + h * 0.15, Math.min(15, w * 0.16));
+}
+
+function drawFence(x, y, w, h) {
+  ctx.strokeStyle = col('woodDk'); ctx.lineWidth = 2;
+  for (let px = x; px <= x + w + 1; px += 12) { ctx.beginPath(); ctx.moveTo(px, y); ctx.lineTo(px, y + h); ctx.stroke(); }
+  ctx.lineWidth = 1.5;
+  for (const ry of [y + 3, y + h * 0.55]) { ctx.beginPath(); ctx.moveTo(x, ry); ctx.lineTo(x + w, ry); ctx.stroke(); }
+}
+
+// Kennel: a row of little gabled dog houses with arched doorways.
+function drawKennel(x, y, w, h, def) {
+  const n = w > 80 ? 2 : 1, gw = (w - 12) / n;
+  for (let i = 0; i < n; i++) {
+    const hx = x + 6 + i * gw, hy = y + h * 0.46, hh = h * 0.46;
+    ctx.fillStyle = col('wood'); roundRect(ctx, hx + 3, hy, gw - 8, hh, 5); ctx.fill();
+    ctx.fillStyle = col(def.roof || 'roofBlue');
+    ctx.beginPath(); ctx.moveTo(hx + 1, hy + 3); ctx.lineTo(hx + gw / 2, hy - hh * 0.45); ctx.lineTo(hx + gw - 5, hy + 3); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#1b1209'; ctx.beginPath(); ctx.arc(hx + gw / 2 - 1, hy + hh, (gw - 10) * 0.28, Math.PI, 0); ctx.fill();
   }
-  // chimney smoke for houses
-  if (def.category === 'house' && Math.random() < 0.4) { /* light puffs handled by fx ambience */ }
+  ctx.fillStyle = col('ink'); sign(def.glyph, x + w / 2, y + h * 0.18, Math.min(15, w * 0.15));
+}
+
+// Food store: a green barn with a big braced door.
+function drawBarn(x, y, w, h, def) {
+  const wallTop = y + h * 0.4, wallH = h * 0.6 - 6;
+  ctx.fillStyle = col('roofGreen'); roundRect(ctx, x + 5, wallTop, w - 10, wallH, 6); ctx.fill();
+  ctx.fillStyle = withAlpha('#fff', 0.12); roundRect(ctx, x + 5, wallTop, w - 10, wallH * 0.4, 6); ctx.fill();
+  ctx.fillStyle = col('woodDk');
+  ctx.beginPath(); ctx.moveTo(x + 2, wallTop + 2); ctx.lineTo(x + w * 0.5, y + h * 0.1); ctx.lineTo(x + w - 2, wallTop + 2); ctx.closePath(); ctx.fill();
+  const dw = w * 0.4, dx = x + w / 2 - dw / 2, dh = h * 0.4, dy = y + h - dh - 6;
+  ctx.fillStyle = col('wood'); roundRect(ctx, dx, dy, dw, dh, 3); ctx.fill();
+  ctx.strokeStyle = withAlpha(col('woodHi'), 0.7); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(dx, dy); ctx.lineTo(dx + dw, dy + dh); ctx.moveTo(dx + dw, dy); ctx.lineTo(dx, dy + dh); ctx.stroke();
+  ctx.fillStyle = col('ink'); sign(def.glyph, x + w / 2, wallTop + 10, Math.min(18, w * 0.2));
+}
+
+// Vet clinic: white walls, blue roof band, red cross.
+function drawClinic(x, y, w, h, def) {
+  const wallTop = y + h * 0.36, wallH = h * 0.64 - 6;
+  ctx.fillStyle = '#F4F7FA'; roundRect(ctx, x + 5, wallTop, w - 10, wallH, 6); ctx.fill();
+  ctx.fillStyle = withAlpha('#cdd9e6', 0.5); roundRect(ctx, x + 5, wallTop + wallH * 0.55, w - 10, wallH * 0.45, 6); ctx.fill();
+  ctx.fillStyle = col('roofBlue'); roundRect(ctx, x + 3, wallTop - 6, w - 6, 10, 4); ctx.fill();
+  const cs = Math.min(w, h) * 0.15, cx = x + w / 2, cy = wallTop + wallH * 0.36;
+  ctx.fillStyle = col('danger');
+  roundRect(ctx, cx - cs * 0.18, cy - cs, cs * 0.36, cs * 2, 2); ctx.fill();
+  roundRect(ctx, cx - cs, cy - cs * 0.18, cs * 2, cs * 0.36, 2); ctx.fill();
+  ctx.fillStyle = '#9fb3d4'; roundRect(ctx, cx - 7, wallTop + wallH - 16, 14, 16, 2); ctx.fill();
+  ctx.fillStyle = isNight() ? withAlpha(col('gold'), 0.9) : '#BFE0F0';
+  roundRect(ctx, x + 9, wallTop + 8, 7, 7, 1.5); ctx.fill(); if (w > 70) { roundRect(ctx, x + w - 16, wallTop + 8, 7, 7, 1.5); ctx.fill(); }
+}
+
+// Viewing deck: a raised, railed wooden platform.
+function drawDeck(x, y, w, h, def) {
+  const deckTop = y + h * 0.5, deckH = h * 0.34;
+  ctx.fillStyle = col('wood'); roundRect(ctx, x + 5, deckTop, w - 10, deckH, 5); ctx.fill();
+  ctx.fillStyle = withAlpha(col('woodHi'), 0.5); roundRect(ctx, x + 5, deckTop, w - 10, deckH * 0.4, 5); ctx.fill();
+  ctx.strokeStyle = withAlpha(col('woodDk'), 0.4); ctx.lineWidth = 1;
+  for (let lx = x + 11; lx < x + w - 8; lx += 8) { ctx.beginPath(); ctx.moveTo(lx, deckTop); ctx.lineTo(lx, deckTop + deckH); ctx.stroke(); }
+  const ry = deckTop - h * 0.2;
+  ctx.strokeStyle = col('woodDk'); ctx.lineWidth = 2;
+  for (let px = x + 9; px <= x + w - 7; px += 12) { ctx.beginPath(); ctx.moveTo(px, deckTop); ctx.lineTo(px, ry); ctx.stroke(); }
+  ctx.beginPath(); ctx.moveTo(x + 8, ry); ctx.lineTo(x + w - 7, ry); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x + 11, deckTop + deckH); ctx.lineTo(x + 11, y + h - 6); ctx.moveTo(x + w - 11, deckTop + deckH); ctx.lineTo(x + w - 11, y + h - 6); ctx.stroke();
+  ctx.fillStyle = col('ink'); sign(def.glyph, x + w / 2, ry - 9, Math.min(15, w * 0.16));
+}
+
+// Gift shop: striped awning over a little storefront.
+function drawShop(x, y, w, h, def) {
+  const wallTop = y + h * 0.42, wallH = h * 0.58 - 6;
+  ctx.fillStyle = col('wood'); roundRect(ctx, x + 5, wallTop, w - 10, wallH, 6); ctx.fill();
+  const ax = x + 4, ay = wallTop - 2, aw = w - 8, ah = h * 0.14;
+  for (let i = 0; i * 10 < aw; i++) { ctx.fillStyle = i % 2 ? col('roofRed') : '#fff'; ctx.fillRect(ax + i * 10, ay, Math.min(10, aw - i * 10), ah); }
+  ctx.fillStyle = col('roofRed'); for (let i = 0; i * 10 < aw; i++) { ctx.beginPath(); ctx.arc(ax + Math.min(i * 10 + 5, aw - 1), ay + ah, 5, 0, Math.PI); ctx.fill(); }
+  ctx.fillStyle = col('woodDk'); roundRect(ctx, x + w / 2 - 7, wallTop + wallH - 16, 14, 16, 2); ctx.fill();
+  ctx.fillStyle = isNight() ? withAlpha(col('gold'), 0.9) : '#BFE0F0'; roundRect(ctx, x + 9, wallTop + 6, 10, 8, 2); ctx.fill();
+  ctx.fillStyle = col('ink'); sign(def.glyph, x + w - 16, wallTop + 10, Math.min(16, w * 0.2));
+}
+
+// Storyteller's fire: a stone ring with flickering flames and log benches.
+function drawFirepit(x, y, w, h, def) {
+  const cx = x + w / 2, cy = y + h * 0.6;
+  ctx.fillStyle = col('woodDk');
+  roundRect(ctx, x + 4, cy + 6, w * 0.3, 5, 2); ctx.fill();
+  roundRect(ctx, x + w * 0.66, cy + 6, w * 0.3, 5, 2); ctx.fill();
+  if (isNight()) { const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, 42); g.addColorStop(0, withAlpha(col('gold'), 0.35)); g.addColorStop(1, withAlpha(col('gold'), 0)); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, 42, 0, 7); ctx.fill(); }
+  ctx.fillStyle = col('stone');
+  for (let a = 0; a < 6; a++) { const ang = a / 6 * 6.28; ctx.beginPath(); ctx.arc(cx + Math.cos(ang) * 12, cy + Math.sin(ang) * 6, 3.5, 0, 7); ctx.fill(); }
+  const f = 1 + Math.sin(performance.now() / 120) * 0.16;
+  ctx.fillStyle = col('brandDeep'); ctx.beginPath(); ctx.moveTo(cx - 7, cy + 2); ctx.quadraticCurveTo(cx, cy - 16 * f, cx + 7, cy + 2); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = col('gold'); ctx.beginPath(); ctx.moveTo(cx - 4, cy + 1); ctx.quadraticCurveTo(cx, cy - 10 * f, cx + 4, cy + 1); ctx.closePath(); ctx.fill();
+}
+
+// Photo spot: an empty picture frame on two posts.
+function drawPhotoSpot(x, y, w, h, def) {
+  ctx.fillStyle = col('woodDk');
+  roundRect(ctx, x + w * 0.22, y + h * 0.42, 4, h * 0.5, 2); ctx.fill();
+  roundRect(ctx, x + w * 0.78 - 4, y + h * 0.42, 4, h * 0.5, 2); ctx.fill();
+  const fx = x + w * 0.18, fy = y + h * 0.16, fw = w * 0.64, fh = h * 0.42;
+  ctx.fillStyle = col('brand'); roundRect(ctx, fx, fy, fw, fh, 4); ctx.fill();
+  ctx.fillStyle = withAlpha('#bfe0f0', 0.5); roundRect(ctx, fx + 4, fy + 4, fw - 8, fh - 8, 3); ctx.fill();
+  ctx.fillStyle = col('ink'); sign(def.glyph, fx + fw / 2, fy + fh / 2, Math.min(18, fw * 0.4));
 }
 
 function drawDecor(b, def, x, y, w, h) {
@@ -281,7 +409,8 @@ function drawDog(d, now) {
 
   // attention icon (drawn unscaled, upright)
   let icon = null;
-  if (d.hunger < 30) icon = '🍖'; else if (sick) icon = '❤️‍🩹'; else if (tired) icon = '💤';
+  if (d.illness) icon = C.illness(d.illness.key)?.glyph || '🤒';
+  else if (d.hunger < 30) icon = '🍖'; else if (sick) icon = '❤️‍🩹'; else if (tired) icon = '💤';
   if (icon && !d.missionId) {
     ctx.font = '13px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const bob = Math.sin(now / 300) * 2;

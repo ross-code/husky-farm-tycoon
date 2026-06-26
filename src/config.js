@@ -73,6 +73,11 @@ export const ECONOMY = {
   sellRefundFrac: 0.5,       // building refund on remove
   dogSellFrac: 0.6,          // dog resale fraction of market value
   bankruptcyFloor: 30,       // buy buttons block below this
+
+  // medical / vet
+  sicknessChancePerDay: 0.05, // chance per healthy dog, per day, to fall ill
+  sicknessGraceDays: 3,       // no illness in a farm's first few days
+  vetHouseCall: 60,           // Dr. Sophie Park's call-out fee (waived with on-site clinic)
 };
 
 // ---- dog breeds (stats on a 1..100 scale; baseStats are the soft potential cap) ----
@@ -85,7 +90,7 @@ export const BREEDS = {
   greenland_dog:   { key: 'greenland_dog',   name: 'Greenland Dog',   rarity: 'rare',      price: 720, charisma: 0.9, coat: 'sable',      baseStats: { speed: 58, stamina: 93, strength: 80, temperament: 42 }, unlocked: false, flavor: 'Iron endurance for the long expeditions. Stubborn to train.' },
   chinook:         { key: 'chinook',         name: 'Chinook',         rarity: 'rare',      price: 820, charisma: 1.2, coat: 'redcopper',  baseStats: { speed: 62, stamina: 78, strength: 78, temperament: 84 }, unlocked: false, flavor: 'A premium team dog: balanced, calm, and willing.' },
   eurohound:       { key: 'eurohound',       name: 'Eurohound',       rarity: 'very_rare', price: 1200,charisma: 1.0, coat: 'blackwhite', baseStats: { speed: 96, stamina: 64, strength: 58, temperament: 60 }, unlocked: false, flavor: 'Pure sprint specialist. The fastest dog on the trail.' },
-  elvis:           { key: 'elvis',           name: 'Elvis',           rarity: 'legendary', price: 0,   charisma: 2.0, coat: 'elvis',      baseStats: { speed: 90, stamina: 90, strength: 86, temperament: 99 }, unlocked: false, flavor: 'The Legend of the Hollow. Elite in everything. Earned, never bought.' },
+  elvis:           { key: 'elvis',           name: 'Elvis',           rarity: 'legendary', price: 6000,charisma: 2.0, coat: 'whitepure',  baseStats: { speed: 90, stamina: 90, strength: 86, temperament: 99 }, unlocked: false, oneOnly: true, flavor: 'The Legend of the Hollow: a pure-white Siberian with ice-blue eyes. Elite at everything. Only one will ever exist. Unlocked by finishing the Serum Run.' },
 };
 
 // ---- buildings ----------------------------------------------------------
@@ -108,6 +113,8 @@ export const BUILDINGS = {
   trading_post:    { key: 'trading_post',    name: 'The Trading Post',   category: 'tourist',  cost: 650, size: { w: 2, h: 2 }, capacity: 0, appeal: 18, upkeep: 12, spendMult: 1.2, roof: 'roofRed', glyph: '🛍️', unlocked: false, flavor: 'A gift shop. Visitors love a souvenir.', desc: '+18 appeal and +20% tourist spend.' },
   cocoa_cabin:     { key: 'cocoa_cabin',     name: 'The Cocoa Cabin',    category: 'tourist',  cost: 900, size: { w: 3, h: 2 }, capacity: 0, appeal: 25, upkeep: 18, spendMult: 1.35, roof: 'roofGreen', glyph: '☕', unlocked: false, flavor: 'Hot cocoa keeps the crowd lingering.', desc: '+25 appeal and +35% tourist spend.' },
   storytellers_fire:{key: 'storytellers_fire',name: "Storyteller's Fire", category: 'tourist',  cost: 750, size: { w: 2, h: 2 }, capacity: 0, appeal: 30, upkeep: 10, roof: 'roofRed',   glyph: '🔥', unlocked: false, flavor: 'Tales of Elvis draw a hushed, paying crowd.', desc: '+30 appeal.' },
+
+  park_clinic:     { key: 'park_clinic',     name: "Dr. Park's Clinic",  category: 'medical',  cost: 4000,size: { w: 3, h: 3 }, capacity: 0, appeal: 8,  upkeep: 25, onsiteVet: true, roof: 'roofSnow',  glyph: '🏥', unlocked: false, flavor: 'Dr. Sophie Park sets up shop on-site. No more call-out fees, and sick dogs are treated automatically.', desc: 'On-site vet: auto-treats sick dogs, no house calls.' },
 
   lantern_post:    { key: 'lantern_post',    name: 'Lantern Post',       category: 'decor',    cost: 40,  size: { w: 1, h: 1 }, capacity: 0, appeal: 2,  upkeep: 0,  roof: 'gold',       glyph: '🏮', unlocked: true,  flavor: 'The namesake light. Pretty at night.', desc: '+2 appeal (decor capped).' },
   path_tile:       { key: 'path_tile',       name: 'Path Tile',          category: 'decor',    cost: 15,  size: { w: 1, h: 1 }, capacity: 0, appeal: 0.5,upkeep: 0,  roof: 'path',       glyph: '·',  unlocked: true,  flavor: 'Tourists love a tidy trail.', desc: '+0.5 appeal. Walkable.' },
@@ -150,13 +157,26 @@ export const MILESTONES = [
     toast: 'The Hollow is a real attraction. Rare breeds and grand attractions unlocked.' },
   { key: 'm4_outfitter', name: 'Expedition Outfitter', desc: 'Reputation 350 and 6 dogs.',
     check: (S) => S.reputation >= 350 && S.dogs.length >= 6,
-    unlocks: { buildings: ['grand_lodge'], breeds: ['eurohound'], missions: ['iron_ridge', 'blizzard_relay'] },
-    toast: 'Serious expeditions await. The Grand Lodge and the Eurohound are yours to claim.' },
+    unlocks: { buildings: ['grand_lodge', 'park_clinic'], breeds: ['eurohound'], missions: ['iron_ridge', 'blizzard_relay'] },
+    toast: 'Serious expeditions await. The Grand Lodge, the Eurohound, and Dr. Park\'s Clinic are unlocked.' },
   { key: 'm5_legend', name: 'Legend of the North', desc: 'Reach reputation 600.',
     check: (S) => S.reputation >= 600,
     unlocks: { missions: ['serum_run'] },
     toast: "Old Pekka leaves a worn map on your porch. 'You're ready for the big one. Nenana to Nome.'" },
 ];
+
+// ---- illnesses (Dr. Sophie Park's case load) ----------------------------
+// fee = treatment cost; the house-call fee (ECONOMY.vetHouseCall) is added on top
+// unless an on-site clinic is built. severe illnesses keep a dog off missions longer.
+export const ILLNESSES = [
+  { key: 'upset_tummy',   name: 'Upset Tummy',    glyph: '🤢', fee: 80,  recoverDays: 1, severe: false, blurb: 'vomiting and a very sad face' },
+  { key: 'the_runs',      name: 'The Runs',       glyph: '💩', fee: 90,  recoverDays: 1, severe: false, blurb: 'a bad case of diarrhea' },
+  { key: 'lethargy',      name: 'Lethargy',       glyph: '😪', fee: 70,  recoverDays: 1, severe: false, blurb: 'no pep, just wants to lie down' },
+  { key: 'ear_infection', name: 'Ear Infection',  glyph: '👂', fee: 120, recoverDays: 2, severe: false, blurb: 'head-shaking and grumpiness' },
+  { key: 'kennel_cough',  name: 'Kennel Cough',   glyph: '🤧', fee: 140, recoverDays: 2, severe: false, blurb: 'a honking, hacking cough' },
+  { key: 'broken_leg',    name: 'Broken Leg',     glyph: '🩼', fee: 380, recoverDays: 4, severe: true,  blurb: 'a nasty limp, no running for a while' },
+];
+export const illness = (key) => ILLNESSES.find((i) => i.key === key);
 
 // ---- copy: dog name pool, tips, flavor (all em-dash-free, publish-safe) ----
 export const DOG_NAMES = ['Nanook', 'Saxon', 'Juno', 'Maple', 'Togo', 'Biscuit', 'Cricket', 'Pepper', 'Sergeant', 'Aurora', 'Frost', 'Birch', 'Willow', 'Scout', 'Koda', 'Luna', 'Bandit', 'Cocoa', 'Misty', 'Atlas', 'Sky', 'Tundra', 'Ember', 'Pippin', 'Yukon', 'Clover'];
@@ -179,8 +199,10 @@ export const FLAVOR = {
   win: ['The team\'s back, tongues out and tails high. {mission} is done.', 'Crowd went wild at the finish line. Cash and cheers, Keeper.', '{dog} led the whole way home. Give that dog an extra biscuit.'],
   lose: ['Tough run. The team made it home for cocoa and a nap.', 'Came up short this time. The trail will be there tomorrow.', 'No prize today, but {dog} ran their heart out. Rest up.'],
   care: ['{name} is giving you The Look. Probably hungry.', '{name} keeps glancing at the empty bowl. Subtle.'],
-  serumWin: ['You ran the Serum Run and finished. They\'ll tell stories about the Hollow for years. Keeper, you did it.'],
-  elvis: ['A silver husky trots out of the treeline like he owns the place. The legend himself. Elvis has come home to the Hollow.'],
+  sick: ['{name} is under the weather: {illness}. Call Dr. Sophie Park.', 'Uh oh. {name} has {illness}. Time to ring the vet.', '{name} isn\'t themselves today. Looks like {illness}.'],
+  treated: ['Dr. Sophie Park patched {name} right up. Good as new.', '{name} is treated and resting easy. Thanks, Dr. Park.', 'House call done. {name} is back on their paws.'],
+  serumWin: ['You ran the Serum Run and finished. They\'ll tell stories about the Hollow for years. And the legend himself, Elvis, can now come home to the Hollow.'],
+  elvis: ['A pure-white husky with ice-blue eyes pads in like he owns the place. The legend himself. Elvis has come home to the Hollow.'],
 };
 
 // ---- lookups ------------------------------------------------------------
@@ -197,5 +219,6 @@ export const CATEGORIES = [
   { key: 'training', label: 'Train', ico: '🎓' },
   { key: 'breeding', label: 'Breed', ico: '💕' },
   { key: 'tourist', label: 'Tourism', ico: '🔭' },
+  { key: 'medical', label: 'Vet', ico: '🏥' },
   { key: 'decor', label: 'Decor', ico: '🏮' },
 ];

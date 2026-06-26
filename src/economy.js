@@ -52,7 +52,7 @@ export function computeAppeal() {
   for (const d of S.dogs) {
     const breed = C.BREEDS[d.breedKey];
     if (!breed) continue;
-    charm += (d.happiness / 100) * breed.charisma * 1.6;
+    charm += (d.happiness / 100) * breed.charisma * 1.6 * (d.illness ? 0.4 : 1);
   }
   S.appeal = Math.round(structural + decor + charm);
   return S.appeal;

@@ -5,7 +5,7 @@ import { S, setPanel, setBuildSelection, clearBuildSelection, select, saveGame, 
 import * as C from './config.js';
 import { clamp, fmtMoney, fmtTime, titleize } from './util.js';
 import { netPerDay, buyFood, dogMarketValue, sellPrice } from './economy.js';
-import { buyDog, feedDog, playWithDog, trainDog, breedDogs, canBreed, sellDog, dogCapacity, canTrain, canBreedHere } from './dogs.js';
+import { buyDog, feedDog, playWithDog, feedAll, playWithAll, trainDog, breedDogs, canBreed, sellDog, dogCapacity, canTrain, canBreedHere, treatDog, treatAllSick, treatCost, hasClinic, sickDogs } from './dogs.js';
 import { placeBuilding, removeBuilding, hasHouse } from './buildings.js';
 import { startMission, canStart, eligibleDogs, missionStatus, successChanceFor } from './missions.js';
 
@@ -168,7 +168,12 @@ function dogsPanel() {
   }
   // needs-care first
   const dogs = [...S.dogs].sort((a, b) => careScore(a) - careScore(b));
-  let body = '';
+  const sick = sickDogs();
+  let body = `<div class="row" style="gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <button class="btn btn-sm" data-act="feedall">🦴 Feed All</button>
+      <button class="btn btn-sm" data-act="playall">❤ Play All</button>
+      ${sick.length && !hasClinic() ? `<button class="btn btn-sm btn-danger" data-act="treatall">🚑 Treat All (${sick.length})</button>` : ''}
+    </div>`;
   // breeding action bar
   if (S.ui.breedPick.length === 2) {
     const [a, b] = S.ui.breedPick.map((id) => S.dogs.find((d) => d.id === id));
@@ -187,30 +192,57 @@ function dogsPanel() {
       <div class="statline"><span class="lbl">Hunger</span><div class="bar"><div class="bar-fill hunger" style="width:${d.hunger}%"></div></div><span class="num"></span></div>
       <div class="statline"><span class="lbl">Energy</span><div class="bar"><div class="bar-fill energy" style="width:${d.energy}%"></div></div><span class="num"></span></div>
       <div class="statline"><span class="lbl">Happy</span><div class="bar"><div class="bar-fill happy" style="width:${d.happiness}%"></div></div><span class="num"></span></div>
+      ${d.illness ? sickBanner(d) : ''}
       ${d.missionId ? '' : dogCardActions(d)}
     </div>`;
   }
   return panelShell('Dogs', `${S.dogs.length} / ${cap}`, body);
 }
-function careScore(d) { return (d.hunger < 30 ? -100 : 0) + (d.health < 35 ? -50 : 0) + (d.energy < 25 ? -20 : 0) + d.happiness; }
+function careScore(d) { return (d.illness ? -200 : 0) + (d.hunger < 30 ? -100 : 0) + (d.health < 35 ? -50 : 0) + (d.energy < 25 ? -20 : 0) + d.happiness; }
+
+function sickBanner(d) {
+  const ill = C.illness(d.illness.key); if (!ill) return '';
+  const clinic = hasClinic();
+  return `<div class="card" style="margin:7px 0 0;border-color:var(--bad);background:rgba(224,84,78,.10)">
+    <div class="row"><span>${ill.glyph} <b>${ill.name}</b></span><span class="spacer"></span>
+      ${clinic ? '<span class="muted">Dr. Park on-site ✓</span>'
+        : `<button class="btn btn-sm btn-primary" data-act="treat:${d.id}">Call Dr. Park ($${treatCost(d)})</button>`}</div>
+    <div class="muted">${esc(d.name)} has ${ill.blurb}.</div></div>`;
+}
 
 function marketPanel() {
   let body = `<div class="card"><div class="row"><b>🦴 Food Supplies</b><span class="spacer"></span><span class="muted">Stock: ${Math.round(S.food)}</span></div>
     <div class="muted">Dogs eat ${C.ECONOMY.foodPerDogPerDay}/day each.</div>
     <button class="btn btn-sm btn-primary" data-act="buyfood" style="margin-top:6px">Buy ${C.ECONOMY.foodBuyBatch} food ($${Math.round(C.ECONOMY.foodBuyBatch * C.ECONOMY.foodUnitCost)})</button></div>
     <div class="section-title">Adopt a Husky</div>`;
+  const room = S.dogs.length < dogCapacity();
   for (const breed of Object.values(C.BREEDS)) {
-    if (breed.key === 'elvis') continue; // legendary, not for sale
     const unlocked = isUnlocked('breeds', breed.key);
-    const pup = breed.price, adult = Math.round(breed.price * 1.7);
-    const room = S.dogs.length < dogCapacity();
     const locked = !unlocked;
+    const statline = `SPD ${breed.baseStats.speed} · STA ${breed.baseStats.stamina} · STR ${breed.baseStats.strength} · TMP ${breed.baseStats.temperament}`;
+
+    if (breed.oneOnly) {
+      const got = S.elvisAcquired;
+      body += `<div class="card ${locked && !got ? 'locked' : ''}" style="${unlocked && !got ? 'border-color:var(--gold)' : ''}">
+        <div class="row"><span class="swatch" style="background:${C.COATS[breed.coat]?.base || '#fff'}">⭐</span>
+          <div style="flex:1">
+            <div class="row"><span class="name">${breed.name}</span><span class="spacer"></span><span class="tag">Legendary · one only</span></div>
+            <div class="muted">${breed.flavor}</div>
+            <div class="muted">${statline}${locked && !got ? ' · 🔒 Finish the Serum Run to unlock' : ''}</div>
+          </div></div>
+        ${got ? '<div class="muted" style="margin-top:7px">The one and only Elvis is already home. 🐾</div>'
+          : unlocked ? `<button class="btn btn-sm ${room && S.cash >= breed.price ? 'btn-primary' : 'disabled'}" ${room && S.cash >= breed.price ? `data-act="buy:${breed.key}:adult"` : ''} style="margin-top:7px;width:100%">${room ? `Adopt Elvis ($${breed.price})` : 'No free kennel'}</button>` : ''}
+      </div>`;
+      continue;
+    }
+
+    const pup = breed.price, adult = Math.round(breed.price * 1.7);
     body += `<div class="card ${locked ? 'locked' : ''}">
       <div class="row"><span class="swatch" style="background:${C.COATS[breed.coat]?.base || '#888'}">🐶</span>
         <div style="flex:1">
           <div class="row"><span class="name">${breed.name}</span><span class="spacer"></span><span class="tag">${titleize(breed.rarity)}</span></div>
           <div class="muted">${breed.flavor}</div>
-          <div class="muted">SPD ${breed.baseStats.speed} · STA ${breed.baseStats.stamina} · STR ${breed.baseStats.strength} · TMP ${breed.baseStats.temperament}${locked ? ` · 🔒 ${unlockHint('breeds', breed.key)}` : ''}</div>
+          <div class="muted">${statline}${locked ? ` · 🔒 ${unlockHint('breeds', breed.key)}` : ''}</div>
         </div></div>
       ${locked ? '' : `<div class="row" style="gap:6px;margin-top:7px">
         <button class="btn btn-sm ${room && S.cash >= pup ? 'btn-primary' : 'disabled'}" ${room && S.cash >= pup ? `data-act="buy:${breed.key}:pup"` : ''}>Pup $${pup}</button>
@@ -363,6 +395,10 @@ function handle(act, a, b, e) {
     case 'buy': buyDog(a, b === 'adult'); break;
     case 'feed': feedDog(dog(a)); break;
     case 'play': playWithDog(dog(a)); break;
+    case 'feedall': feedAll(); break;
+    case 'playall': playWithAll(); break;
+    case 'treat': treatDog(dog(a)); break;
+    case 'treatall': treatAllSick(); break;
     case 'train': trainDog(dog(a), b); break;
     case 'sell': { const d = dog(a); if (d && confirm(`Sell ${d.name} for $${sellPrice(d)}?`)) sellDog(d); break; }
     case 'selectdog': select('dog', a); break;

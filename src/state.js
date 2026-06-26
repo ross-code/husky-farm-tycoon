@@ -18,6 +18,7 @@ function freshState() {
     paused: false,
     speed: 1,                // 1 | 2 | 3 game-speed multiplier
     over: false,
+    elvisAcquired: false,    // the one and only Elvis can be obtained once, ever
 
     time: { day: 1, tod: 0.28, elapsed: 0 }, // tod = fraction of day [0,1); start mid-morning
 

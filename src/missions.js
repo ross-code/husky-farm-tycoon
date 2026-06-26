@@ -1,11 +1,10 @@
 // missions.js — the active money engine: send teams out, resolve success/fail, pay out.
 // Imports state/config/util + economy + dogs + buildings.
 
-import { S, toast, pushFx, grantXp, dogById } from './state.js';
+import { S, toast, pushFx, grantXp, dogById, unlock } from './state.js';
 import * as C from './config.js';
 import { clamp, uid, randInt, choice, sum, avg } from './util.js';
 import { earn } from './economy.js';
-import { awardElvis } from './dogs.js';
 import { gatePoint } from './buildings.js';
 
 const MIN_MISSION_ENERGY = 25;
@@ -20,7 +19,7 @@ export function rollAvailable() {
 }
 
 export const eligibleDogs = () =>
-  S.dogs.filter((d) => d.stage === 'adult' && !d.missionId && d.energy >= MIN_MISSION_ENERGY);
+  S.dogs.filter((d) => d.stage === 'adult' && !d.missionId && !d.illness && d.energy >= MIN_MISSION_ENERGY);
 
 // Weighted team power for a mission's focus stats, modulated by energy & happiness.
 function teamScore(def, dogs) {
@@ -47,6 +46,7 @@ export function canStart(missionKey, dogIds) {
   for (const d of dogs) {
     if (d.stage !== 'adult') return { ok: false, reason: `${d.name} is too young.`, successChance: 0 };
     if (d.missionId) return { ok: false, reason: `${d.name} is already away.`, successChance: 0 };
+    if (d.illness) return { ok: false, reason: `${d.name} is sick and needs the vet.`, successChance: 0 };
     if (d.energy < MIN_MISSION_ENERGY) return { ok: false, reason: `${d.name} is too tired.`, successChance: 0 };
   }
   return { ok: true, successChance: successChanceFor(def, dogs) };
@@ -104,7 +104,7 @@ function resolve(inst) {
     for (const d of dogs) d.stats[focusStat] = clamp(d.stats[focusStat] + 1, 0, d.potential[focusStat] + 2);
     freeDogs(inst, 30);
     const line = choice(C.FLAVOR.win).replace('{mission}', def.name).replace('{dog}', lead?.name || 'The lead dog');
-    if (def.awardsElvis) { toast(C.FLAVOR.serumWin[0], 'good', 7); awardElvis(); }
+    if (def.awardsElvis) { unlock('breeds', 'elvis'); toast(C.FLAVOR.serumWin[0], 'good', 8); }
     else toast(line, 'good');
     pushFx(gate.x, gate.y - 28, '🏆', C.PALETTE.gold, 1.8);
   } else if (r < inst.successChance + 0.25) {

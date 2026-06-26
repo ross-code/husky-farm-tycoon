@@ -55,7 +55,7 @@ export function createDog(breedKey, opts = {}) {
     stage,
     stats, potential,
     hunger: 82, happiness: 78, health: 100, energy: 92,
-    missionId: null, breedCooldownDay: 0,
+    missionId: null, breedCooldownDay: 0, illness: null,
     bornDay: S.time.day,
     coatId: breed.coat, maskId: opts.maskId || choice(C.MASKS), eyeColor: eye,
     // visual fields used by entities/render
@@ -68,14 +68,19 @@ export function buyDog(breedKey, asAdult = false) {
   const breed = C.BREEDS[breedKey];
   if (!breed) return null;
   if (!S.unlocks.breeds.includes(breedKey)) { toast(`${breed.name} is not available yet.`, 'warn'); return null; }
+  if (breed.oneOnly) {
+    asAdult = true;
+    if (S.elvisAcquired || S.dogs.some((d) => d.breedKey === breedKey)) { toast(`There is only one ${breed.name}.`, 'warn'); return null; }
+  }
   if (!hasRoom()) { toast('No free kennel. Build more housing first.', 'warn'); return null; }
-  const price = Math.round(breed.price * (asAdult ? 1.7 : 1));
-  if (!spend(price)) { toast(`You need $${price} for a ${breed.name}.`, 'warn'); return null; }
-  const dog = createDog(breedKey, { stage: asAdult ? 'adult' : 'puppy' });
+  const price = breed.oneOnly ? breed.price : Math.round(breed.price * (asAdult ? 1.7 : 1));
+  if (!spend(price)) { toast(`You need $${price} for ${breed.oneOnly ? breed.name : 'a ' + breed.name}.`, 'warn'); return null; }
+  const dog = createDog(breedKey, { stage: asAdult ? 'adult' : 'puppy', name: breed.oneOnly ? breed.name : undefined });
+  if (breed.oneOnly) { S.elvisAcquired = true; dog.happiness = 100; dog.health = 100; dog.energy = 100; }
   S.dogs.push(dog);
   S.stats.dogsBought++;
-  pushFx(dog.x, dog.y - 16, '🐾', C.PALETTE.brand, 1.1);
-  toast(C.FLAVOR.adopt[randInt(0, C.FLAVOR.adopt.length - 1)].replace('{name}', dog.name), 'good');
+  pushFx(dog.x, dog.y - 16, breed.oneOnly ? '★' : '🐾', breed.oneOnly ? C.PALETTE.gold : C.PALETTE.brand, breed.oneOnly ? 2 : 1.1);
+  toast(breed.oneOnly ? C.FLAVOR.elvis[0] : C.FLAVOR.adopt[randInt(0, C.FLAVOR.adopt.length - 1)].replace('{name}', dog.name), 'good', breed.oneOnly ? 6 : 4);
   S.ui.dirty = true;
   return dog;
 }
@@ -95,6 +100,75 @@ export function playWithDog(dog) {
   dog.happiness = clamp(dog.happiness + 12, 0, 100);
   dog.energy = clamp(dog.energy - 4, 0, 100);
   pushFx(dog.x, dog.y - 16, '❤', '#FF8FA3', 0.9);
+  S.ui.dirty = true;
+}
+
+// Whole-pack convenience actions.
+export function feedAll() {
+  if (!S.dogs.length) { toast('No dogs to feed yet.', 'info', 1.4); return; }
+  let n = 0;
+  for (const d of S.dogs) { const before = d.hunger; feedDog(d); if (d.hunger > before) n++; }
+  if (n) toast(`Fed ${n} dog${n > 1 ? 's' : ''}.`, 'good', 1.6);
+}
+export function playWithAll() {
+  if (!S.dogs.length) { toast('No dogs to play with yet.', 'info', 1.4); return; }
+  for (const d of S.dogs) playWithDog(d);
+  toast('Played with the whole pack. Tails everywhere.', 'good', 1.6);
+}
+
+// ---- medical: Dr. Sophie Park -------------------------------------------
+export const hasClinic = () => S.buildings.some((b) => C.BUILDINGS[b.key]?.onsiteVet);
+export const sickDogs = () => S.dogs.filter((d) => d.illness);
+
+function clearIllness(dog) {
+  dog.illness = null;
+  dog.happiness = clamp(dog.happiness + 12, 0, 100);
+  dog.health = clamp(dog.health + 20, 0, 100);
+  if (dog.energy < 40) dog.energy = clamp(dog.energy + 15, 0, 100);
+}
+
+// What a single house call / treatment costs right now (for UI labels).
+export function treatCost(dog) {
+  if (!dog?.illness) return 0;
+  const ill = C.illness(dog.illness.key);
+  return (ill?.fee || 0) + (hasClinic() ? 0 : C.ECONOMY.vetHouseCall);
+}
+
+// Call Dr. Sophie Park out to treat one dog.
+export function treatDog(dog) {
+  if (!dog || !dog.illness) return false;
+  const cost = treatCost(dog);
+  if (!spend(cost)) { toast(`Dr. Park's visit for ${dog.name} costs $${cost}.`, 'warn'); return false; }
+  pushFx(dog.x, dog.y - 16, '➕', C.PALETTE.teal, 1.2);
+  clearIllness(dog);
+  toast(C.FLAVOR.treated[randInt(0, C.FLAVOR.treated.length - 1)].replace('{name}', dog.name), 'good');
+  S.ui.dirty = true;
+  return true;
+}
+
+export function treatAllSick() {
+  const sick = sickDogs();
+  if (!sick.length) return;
+  let n = 0;
+  for (const d of sick) { if (treatDog(d)) n++; else break; }
+  if (n) toast(`Dr. Sophie Park made the rounds: ${n} treated.`, 'good', 2);
+}
+
+// Once per in-game day: the clinic auto-treats; otherwise dogs may fall ill.
+export function dailyHealthCheck() {
+  const clinic = hasClinic();
+  if (clinic) for (const d of S.dogs) if (d.illness) clearIllness(d);
+  if (S.time.day <= C.ECONOMY.sicknessGraceDays) return;
+  for (const d of S.dogs) {
+    if (d.illness || d.missionId) continue;
+    if (!chance(C.ECONOMY.sicknessChancePerDay)) continue;
+    const ill = choice(C.ILLNESSES);
+    d.illness = { key: ill.key, sinceDay: S.time.day };
+    d.happiness = clamp(d.happiness - 12, 0, 100);
+    if (ill.severe) d.energy = clamp(d.energy - 20, 0, 100);
+    if (clinic) clearIllness(d); // on-site vet catches it the same day
+    else toast(C.FLAVOR.sick[randInt(0, C.FLAVOR.sick.length - 1)].replace('{name}', d.name).replace('{illness}', ill.name), 'bad', 5);
+  }
   S.ui.dirty = true;
 }
 
@@ -224,5 +298,10 @@ export function tickDogs(dt) {
     const target = clamp(38 + d.hunger * 0.42 + (d.health - 50) * 0.2, 0, 100);
     d.happiness = approach(d.happiness, target, E.happyDriftPerDay * fday);
     if (auraTotal) d.happiness = clamp(d.happiness + auraTotal * fday, 0, 100);
+    // Illness wears a dog down until Dr. Park treats it.
+    if (d.illness) {
+      d.happiness = clamp(d.happiness - 6 * fday, 0, 100);
+      if (C.illness(d.illness.key)?.severe) d.health = clamp(d.health - 4 * fday, 0, 100);
+    }
   }
 }
