@@ -5,7 +5,16 @@
 import { titleize } from './util.js';
 
 // ---- world grid ---------------------------------------------------------
-export const GRID = { cols: 20, rows: 13, tile: 48 };   // world = 960 x 624 px
+export const GRID = { cols: 48, rows: 30, tile: 44 };   // full world ~2112 x 1320 px
+export const VIEW = { w: 1200, h: 760 };                // canvas backing; CSS fits it to the stage
+
+// You start owning a small plot and buy land to expand into the full grid.
+export const PROPERTY = [
+  { cols: 20, rows: 13, cost: 0 },
+  { cols: 28, rows: 19, cost: 4000 },
+  { cols: 36, rows: 24, cost: 14000 },
+  { cols: 48, rows: 30, cost: 40000 },
+];
 
 // ---- art palette (from the art-direction memo) --------------------------
 export const PALETTE = {
@@ -47,6 +56,10 @@ export const ECONOMY = {
   foodPerDogPerDay: 6,
   foodUnitCost: 1.2,
   foodBuyBatch: 60,
+  foodPerHunger: 0.4,        // food units per hunger point restored when hand-feeding
+
+  // breeding dens auto-produce a pup every N days if there's an eligible pair + room
+  autoBreedDays: 3,
 
   // tourists / appeal
   appealBase: 5,             // the Keeper's Cabin radiates a little appeal
@@ -80,6 +93,27 @@ export const ECONOMY = {
   vetHouseCall: 60,           // Dr. Sophie Park's call-out fee (waived with on-site clinic)
 };
 
+// ---- food purchase tiers (bulk discounts) -------------------------------
+export const FOOD_TIERS = [
+  { units: 60, cost: 72 },
+  { units: 300, cost: 330 },
+  { units: 1500, cost: 1500 },
+  { units: 8000, cost: 7200 },
+];
+
+// ---- win condition ------------------------------------------------------
+// Win by hitting $1,000,000/day net revenue OR finishing the Serum Run (rep 1000).
+export const WIN = { dailyRevenue: 1000000 };
+
+// ---- the bank (loans) ---------------------------------------------------
+export const BANK = {
+  interestPerDay: 0.015,   // 1.5% daily, compounding on the balance owed
+  baseLimit: 2000,         // base borrowing limit...
+  limitPerRep: 60,         // ...plus this much per reputation point
+  badDebtRatio: 1.4,       // owe more than limit * this and you're in "bad debt"
+  badDebtRepPerDay: 4,     // reputation bled per day while in bad debt
+};
+
 // ---- dog breeds (stats on a 1..100 scale; baseStats are the soft potential cap) ----
 // charisma multiplies tourist appeal contribution.
 export const BREEDS = {
@@ -103,6 +137,18 @@ export const BUILDINGS = {
   cedar_kennels:   { key: 'cedar_kennels',   name: 'Cedar Kennels',      category: 'kennel',   cost: 320, size: { w: 2, h: 2 }, capacity: 7, appeal: 3,  upkeep: 6,  roof: 'roofBlue',   glyph: '🏘️', unlocked: false, flavor: 'Roomier housing as the pack grows.', desc: '+7 dog housing.' },
   aurora_lodge:    { key: 'aurora_lodge',    name: 'Aurora Lodge',       category: 'kennel',   cost: 700, size: { w: 2, h: 2 }, capacity: 6, appeal: 7,  upkeep: 9,  roof: 'roofPurple', glyph: '🏔️', unlocked: false, happyAura: 6, flavor: 'Premium housing. Happy dogs, happy farm.', desc: '+6 housing and a happiness aura.' },
   grand_lodge:     { key: 'grand_lodge',     name: 'Grand Lodge',        category: 'house',    cost: 3000,size: { w: 3, h: 3 }, capacity: 9, appeal: 14, upkeep: 14, roof: 'roofRed',    glyph: '🏰', unlocked: false, flavor: 'A capstone lodge. The Hollow has truly arrived.', desc: '+9 housing and big appeal.' },
+  winter_manor:    { key: 'winter_manor',    name: 'Winter Manor',       category: 'house',    cost: 8000, size: { w: 3, h: 3 }, capacity: 15, appeal: 20, upkeep: 18, roof: 'roofRed',    glyph: '🏘️', unlocked: false, flavor: 'A grand manor for a grand pack.', desc: '+15 housing and big appeal.' },
+  the_grand_hall:  { key: 'the_grand_hall',  name: 'The Grand Hall',     category: 'house',    cost: 30000,size: { w: 3, h: 3 }, capacity: 25, appeal: 30, upkeep: 30, roof: 'roofRed',    glyph: '🏛️', unlocked: false, flavor: 'The crown of Lantern Hollow.', desc: '+25 housing and huge appeal.' },
+  the_long_barn:   { key: 'the_long_barn',   name: 'The Long Barn',      category: 'kennel',   cost: 1500, size: { w: 3, h: 2 }, capacity: 18, appeal: 3, upkeep: 18, roof: 'roofBlue',   glyph: '🏚️', unlocked: false, flavor: 'A long, warm barn for a growing pack.', desc: '+18 dog housing.' },
+  the_great_kennel:{ key: 'the_great_kennel',name: 'The Great Kennel',   category: 'kennel',   cost: 5000, size: { w: 3, h: 3 }, capacity: 40, appeal: 4, upkeep: 40, roof: 'roofBlue',   glyph: '🏯', unlocked: false, flavor: 'Serious housing for a serious operation.', desc: '+40 dog housing.' },
+  husky_high_rise: { key: 'husky_high_rise', name: 'Husky High-Rise',    category: 'kennel',   cost: 20000,size: { w: 3, h: 3 }, capacity: 100,appeal: 6, upkeep: 120,roof: 'roofPurple', glyph: '🏙️', unlocked: false, flavor: 'Hundreds of happy huskies, stacked cozy.', desc: '+100 dog housing.' },
+  agility_course:  { key: 'agility_course',  name: 'Agility Course',     category: 'training', cost: 900,  size: { w: 3, h: 3 }, capacity: 0, appeal: 3, upkeep: 10, enables: 'train', trainBonus: 0.4, roof: 'roofGreen', glyph: '🤸', unlocked: false, flavor: 'Ramps and tunnels sharpen speed and stamina.', desc: 'Train dogs +40% faster.' },
+  strength_gym:    { key: 'strength_gym',    name: 'The Pulling Posts',  category: 'training', cost: 1400, size: { w: 3, h: 3 }, capacity: 0, appeal: 2, upkeep: 12, enables: 'train', trainBonus: 0.5, roof: 'roofGreen', glyph: '💪', unlocked: false, flavor: 'Weighted pulls build raw strength.', desc: 'Train dogs +50% faster.' },
+  the_calm_ring:   { key: 'the_calm_ring',   name: 'The Calm Ring',      category: 'training', cost: 1200, size: { w: 3, h: 3 }, capacity: 0, appeal: 3, upkeep: 10, enables: 'train', trainBonus: 0.4, roof: 'roofGreen', glyph: '🧘', unlocked: false, flavor: 'Patient work raises temperament.', desc: 'Train dogs +40% faster.' },
+  proving_grounds: { key: 'proving_grounds', name: 'The Proving Grounds', category: 'training', cost: 6000, size: { w: 3, h: 3 }, capacity: 0, appeal: 5, upkeep: 25, enables: 'train', trainBonus: 1.0, trainCostCut: 0.3, roof: 'roofGreen', glyph: '🏅', unlocked: false, flavor: 'Elite conditioning for champion teams.', desc: 'Much faster, cheaper training.' },
+  feeding_trough:  { key: 'feeding_trough',  name: 'Feeding Trough',     category: 'food',     cost: 600,  size: { w: 2, h: 2 }, capacity: 0, appeal: 1, upkeep: 8,  autoFeed: 0.5, roof: 'roofGreen', glyph: '🥣', unlocked: false, flavor: 'Auto-fills bowls. Tops the pack up each day.', desc: 'Auto-feeds the pack +50%/day.' },
+  provisions_post: { key: 'provisions_post', name: 'Provisions Post',    category: 'food',     cost: 2500, size: { w: 2, h: 2 }, capacity: 0, appeal: 1, upkeep: 18, autoFeed: 0.8, foodDiscount: 0.1, roof: 'roofGreen', glyph: '📦', unlocked: false, flavor: 'A bigger auto-feeder, and cheaper feed.', desc: 'Auto-feeds +80%/day, -10% food cost.' },
+  mess_hall:       { key: 'mess_hall',       name: 'The Mess Hall',      category: 'food',     cost: 25000,size: { w: 3, h: 3 }, capacity: 0, appeal: 4, upkeep: 60, autoFeedFull: true, roof: 'roofGreen', glyph: '🍽️', unlocked: false, flavor: 'Keeps every dog fully fed, always, while food lasts.', desc: 'Keeps the whole pack full daily.' },
 
   the_larder:      { key: 'the_larder',      name: 'The Larder',         category: 'food',     cost: 300, size: { w: 2, h: 2 }, capacity: 0, appeal: 1,  upkeep: 0,  foodDiscount: 0.15, roof: 'roofGreen', glyph: '🦴', unlocked: false, flavor: 'A stocked food store cuts the feed bill.', desc: '-15% food cost (stacks to -30%).' },
   practice_yard:   { key: 'practice_yard',   name: 'The Practice Yard',  category: 'training', cost: 400, size: { w: 3, h: 3 }, capacity: 0, appeal: 2,  upkeep: 8,  enables: 'train', roof: 'roofGreen', glyph: '🎓', unlocked: false, flavor: 'Where good dogs become great ones.', desc: 'Enables training dog stats.' },
@@ -145,24 +191,28 @@ export const MILESTONES = [
     unlocks: {}, toast: 'Welcome to Lantern Hollow, Keeper. Now bring home a dog!' },
   { key: 'm1_open', name: 'Open for Visitors', desc: 'Reach reputation 30.',
     check: (S) => S.reputation >= 30,
-    unlocks: { buildings: ['the_larder', 'practice_yard', 'pawprint_point', 'cedar_kennels', 'baltos_bench'], breeds: ['samoyed', 'alaskan_malamute'], missions: ['frostberry_gather', 'lantern_loop'] },
-    toast: 'Word is spreading. Training, a food store, and new breeds are open.' },
+    unlocks: { buildings: ['the_larder', 'practice_yard', 'pawprint_point', 'cedar_kennels', 'baltos_bench', 'feeding_trough'], breeds: ['samoyed', 'alaskan_malamute'], missions: ['frostberry_gather', 'lantern_loop'] },
+    toast: 'Word is spreading. Training, food stores, and new breeds are open.' },
   { key: 'm2_breeders', name: "Breeders' License", desc: 'Reputation 90 and 2 adult dogs.',
     check: (S) => S.reputation >= 90 && adults(S) >= 2,
-    unlocks: { buildings: ['whelping_den', 'trading_post'], missions: ['whistling_pass', 'timberline_haul'] },
+    unlocks: { buildings: ['whelping_den', 'trading_post', 'the_long_barn'], missions: ['whistling_pass', 'timberline_haul'] },
     toast: 'You can breed your own dogs now, and bigger jobs are posted.' },
   { key: 'm3_destination', name: 'Destination Farm', desc: 'Reputation 180 and 3 mission wins.',
     check: (S) => S.reputation >= 180 && S.missions.wonCount >= 3,
-    unlocks: { buildings: ['cocoa_cabin', 'storytellers_fire', 'aurora_lodge', 'snow_garden'], breeds: ['greenland_dog', 'chinook'], missions: ['moonlit_mail', 'aurora_dash'] },
-    toast: 'The Hollow is a real attraction. Rare breeds and grand attractions unlocked.' },
+    unlocks: { buildings: ['cocoa_cabin', 'storytellers_fire', 'aurora_lodge', 'snow_garden', 'agility_course', 'provisions_post'], breeds: ['greenland_dog', 'chinook'], missions: ['moonlit_mail', 'aurora_dash'] },
+    toast: 'The Hollow is a real attraction. Rare breeds, auto-feeders, and grand attractions unlocked.' },
   { key: 'm4_outfitter', name: 'Expedition Outfitter', desc: 'Reputation 350 and 6 dogs.',
     check: (S) => S.reputation >= 350 && S.dogs.length >= 6,
-    unlocks: { buildings: ['grand_lodge', 'park_clinic'], breeds: ['eurohound'], missions: ['iron_ridge', 'blizzard_relay'] },
-    toast: 'Serious expeditions await. The Grand Lodge, the Eurohound, and Dr. Park\'s Clinic are unlocked.' },
-  { key: 'm5_legend', name: 'Legend of the North', desc: 'Reach reputation 600.',
+    unlocks: { buildings: ['grand_lodge', 'park_clinic', 'strength_gym', 'the_great_kennel'], breeds: ['eurohound'], missions: ['iron_ridge', 'blizzard_relay'] },
+    toast: 'Serious expeditions await. The Grand Lodge, the Great Kennel, the Eurohound, and Dr. Park\'s Clinic are unlocked.' },
+  { key: 'm5_renowned', name: 'Renowned Kennel', desc: 'Reach reputation 600.',
     check: (S) => S.reputation >= 600,
-    unlocks: { missions: ['serum_run'] },
-    toast: "Old Pekka leaves a worn map on your porch. 'You're ready for the big one. Nenana to Nome.'" },
+    unlocks: { buildings: ['winter_manor', 'the_calm_ring'] },
+    toast: 'The Hollow is renowned. Winter Manor and the Calm Ring are yours to build.' },
+  { key: 'm6_legend', name: 'Legend of the North', desc: 'Reach reputation 1000 (the final ascent).',
+    check: (S) => S.reputation >= 1000,
+    unlocks: { buildings: ['husky_high_rise', 'the_grand_hall', 'proving_grounds', 'mess_hall'], missions: ['serum_run'] },
+    toast: "Old Pekka leaves a worn map on your porch. 'You're ready for the big one. Nenana to Nome.' THE SERUM RUN is open." },
 ];
 
 // ---- illnesses (Dr. Sophie Park's case load) ----------------------------

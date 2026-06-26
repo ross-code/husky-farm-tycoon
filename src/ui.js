@@ -4,10 +4,10 @@
 import { S, setPanel, setBuildSelection, clearBuildSelection, select, saveGame, newGame, toast, isUnlocked } from './state.js';
 import * as C from './config.js';
 import { clamp, fmtMoney, fmtTime, titleize } from './util.js';
-import { netPerDay, buyFood, dogMarketValue, sellPrice } from './economy.js';
-import { buyDog, feedDog, playWithDog, feedAll, playWithAll, trainDog, breedDogs, canBreed, sellDog, dogCapacity, canTrain, canBreedHere, treatDog, treatAllSick, treatCost, hasClinic, sickDogs } from './dogs.js';
-import { placeBuilding, removeBuilding, hasHouse } from './buildings.js';
-import { startMission, canStart, eligibleDogs, missionStatus, successChanceFor } from './missions.js';
+import { netPerDay, buyFood, sellPrice, loanLimit, loanAvailable, borrow, repay, dailyRevenue } from './economy.js';
+import { buyDog, feedDog, feedCost, playWithDog, feedAll, playWithAll, trainDog, breedDogs, canBreed, sellDog, dogCapacity, canTrain, canBreedHere, treatDog, treatAllSick, treatCost, hasClinic, sickDogs } from './dogs.js';
+import { placeBuilding, removeBuilding, hasHouse, buyProperty, nextProperty } from './buildings.js';
+import { startMission, canStart, eligibleDogs, missionStatus, bestTeam } from './missions.js';
 
 const $ = (id) => document.getElementById(id);
 const STAT_LABEL = { speed: 'Speed', stamina: 'Stamina', strength: 'Strength', temperament: 'Temper' };
@@ -15,6 +15,7 @@ const STAT_LABEL = { speed: 'Speed', stamina: 'Stamina', strength: 'Strength', t
 function ensureUiState() {
   S.ui.buildCat ||= 'house';
   S.ui.breedPick ||= [];
+  if (S.ui.modal === undefined) S.ui.modal = null;
 }
 
 // ---- small html helpers -------------------------------------------------
@@ -50,10 +51,14 @@ function buildChrome() {
     <div class="chip" title="Net cash per day at current farm"><span class="chip-ico">📈</span><span class="chip-val" id="hud-net"></span></div>
     <div class="spacer"></div>
     <div class="row">
+      <button class="btn btn-sm" data-act="zoomout" title="Zoom out (x)">🔍−</button>
+      <button class="btn btn-sm" data-act="zoomin" title="Zoom in (z)">🔍+</button>
+      <button class="btn btn-sm" data-act="bank" title="The bank: loans + buy property">🏦</button>
       <button class="btn btn-sm" data-act="pause" id="spd-pause" title="Pause (Space)">⏸</button>
-      <button class="btn btn-sm" data-act="speed:1" id="spd-1" title="1x speed">▶</button>
-      <button class="btn btn-sm" data-act="speed:2" id="spd-2" title="2x speed">▶▶</button>
-      <button class="btn btn-sm" data-act="speed:3" id="spd-3" title="3x speed">▶▶▶</button>
+      <button class="btn btn-sm" data-act="speed:1" id="spd-1" title="1x">▶</button>
+      <button class="btn btn-sm" data-act="speed:2" id="spd-2" title="2x">2×</button>
+      <button class="btn btn-sm" data-act="speed:3" id="spd-3" title="3x">3×</button>
+      <button class="btn btn-sm" data-act="speed:4" id="spd-4" title="4x">4×</button>
       <button class="btn btn-sm" data-act="help" title="How to play">？</button>
       <button class="btn btn-sm" data-act="save" title="Save (auto every day)">💾</button>
       <button class="btn btn-sm" data-act="reset" title="New farm">↻</button>
@@ -85,6 +90,7 @@ function updateChrome() {
   tip('spd-1', !S.paused && S.speed === 1);
   tip('spd-2', !S.paused && S.speed === 2);
   tip('spd-3', !S.paused && S.speed === 3);
+  tip('spd-4', !S.paused && S.speed === 4);
   for (const k of ['build', 'dogs', 'market', 'missions']) tip('tab-' + k, S.ui.panel === k, 'active');
   const needCare = S.dogs.some((d) => d.hunger < 30 || d.health < 35 || (d.energy < 25 && !d.missionId));
   const bd = $('badge-dogs'); if (bd) bd.style.display = needCare ? '' : 'none';
@@ -153,7 +159,8 @@ function dogCardActions(d) {
     trainRow += '</div>';
   }
   return `<div class="row" style="gap:5px;margin-top:7px;flex-wrap:wrap">
-      <button class="btn btn-sm" data-act="feed:${d.id}">🦴 Feed</button>
+      <button class="btn btn-sm" data-act="feedmax:${d.id}" title="Fill to full">🦴 Top Off (${feedCost(d)})</button>
+      <button class="btn btn-sm" data-act="feed:${d.id}" title="A quick snack">＋Snack</button>
       <button class="btn btn-sm" data-act="play:${d.id}">❤ Play</button>
       <button class="btn btn-sm ${picked ? 'btn-primary' : ''} ${den ? '' : 'disabled'}" ${den ? `data-act="breedpick:${d.id}"` : ''} title="${den ? 'Select for breeding' : 'Build a Whelping Den'}">💕 Breed</button>
       <button class="btn btn-sm btn-danger" data-act="sell:${d.id}">Sell $${sellPrice(d)}</button>
@@ -211,9 +218,10 @@ function sickBanner(d) {
 }
 
 function marketPanel() {
+  const tiers = C.FOOD_TIERS.map((t, i) => `<button class="btn btn-sm ${S.cash >= t.cost ? 'btn-primary' : 'disabled'}" ${S.cash >= t.cost ? `data-act="buyfoodtier:${i}"` : ''}>${t.units} ($${t.cost})</button>`).join(' ');
   let body = `<div class="card"><div class="row"><b>🦴 Food Supplies</b><span class="spacer"></span><span class="muted">Stock: ${Math.round(S.food)}</span></div>
-    <div class="muted">Dogs eat ${C.ECONOMY.foodPerDogPerDay}/day each.</div>
-    <button class="btn btn-sm btn-primary" data-act="buyfood" style="margin-top:6px">Buy ${C.ECONOMY.foodBuyBatch} food ($${Math.round(C.ECONOMY.foodBuyBatch * C.ECONOMY.foodUnitCost)})</button></div>
+    <div class="muted">Dogs eat ${C.ECONOMY.foodPerDogPerDay}/day each. Bulk tiers are cheaper per unit.</div>
+    <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:7px">${tiers}</div></div>
     <div class="section-title">Adopt a Husky</div>`;
   const room = S.dogs.length < dogCapacity();
   for (const breed of Object.values(C.BREEDS)) {
@@ -276,6 +284,7 @@ function missionsPanel() {
       <div class="row"><b>Assemble: ${def.name}</b><span class="spacer"></span><button class="btn btn-sm" data-act="cancelassemble">✕</button></div>
       <div class="muted">${def.flavor}</div>
       <div class="muted" style="margin:6px 0">Team ${S.ui.assignTeam.length}/${def.teamSize} · Focus: ${Object.keys(def.focus).map((s) => s.slice(0, 3).toUpperCase()).join(' ')}</div>
+      <div class="row" style="gap:6px;margin-bottom:7px"><button class="btn btn-sm btn-primary" data-act="bestteam">✨ Choose Best Team</button><button class="btn btn-sm" data-act="clearteam">Clear</button></div>
       <div class="row" style="flex-wrap:wrap;gap:5px">`;
     const elig = eligibleDogs();
     if (!elig.length) body += '<span class="muted">No rested adult dogs available. Rest and feed your dogs.</span>';
@@ -307,8 +316,67 @@ function missionsPanel() {
 }
 
 // ---- building inspector modal ------------------------------------------
+// ---- coach (automatic onboarding) --------------------------------------
+function coachLine() {
+  if (S.won) return '';
+  if (!hasHouse()) return 'Open the Build tab, pick The Keeper\'s Cabin, then click the snow to place it.';
+  if (!S.dogs.length) return 'Open the Market and adopt your first husky.';
+  if ((S.missions.wonCount + S.missions.lostCount) === 0 && !S.missions.active.length) return 'Open Missions, build a team (try Choose Best Team), and run The Mailbag Trot.';
+  return '';
+}
+function coachBanner() {
+  const line = coachLine();
+  if (!line) return '';
+  return `<div class="card" style="border-color:var(--brand);background:rgba(92,198,255,.10)"><div class="row" style="align-items:flex-start"><span style="font-size:18px">🐾</span><div class="help" style="margin-left:7px"><b>Next step</b><br>${line}</div></div></div>`;
+}
+
+// ---- modals (routed through S.ui.modal so they survive UI refreshes) ----
+function bankModalHTML() {
+  const owed = Math.round(S.loan.owed), limit = loanLimit(), avail = loanAvailable();
+  const tier = nextProperty();
+  const borrowBtns = [500, 2000, 10000].map((a) => `<button class="btn btn-sm ${avail >= a ? 'btn-primary' : 'disabled'}" ${avail >= a ? `data-act="borrow:${a}"` : ''}>Borrow $${a.toLocaleString()}</button>`).join(' ');
+  const repayBtns = owed > 0
+    ? `<button class="btn btn-sm" data-act="repay:500">Repay $500</button> <button class="btn btn-sm" data-act="repay:2000">Repay $2,000</button> <button class="btn btn-sm" data-act="repay:${owed}">Repay All</button>`
+    : '<span class="muted">No debt. Nicely done.</span>';
+  return `<div class="modal-scrim" data-act="closemodal"><div class="modal" data-stop>
+    <div class="modal-head"><b>🏦 First Frost Bank</b></div>
+    <div class="modal-body">
+      <div class="row"><span class="muted">Owed</span><span class="spacer"></span><b style="color:${owed > limit ? 'var(--bad)' : 'inherit'}">${fmtMoney(owed)}</b></div>
+      <div class="row"><span class="muted">Credit limit (rises with reputation)</span><span class="spacer"></span>${fmtMoney(limit)}</div>
+      <div class="help" style="margin:6px 0">Interest ${Math.round(C.BANK.interestPerDay * 100)}%/day, compounding. Owe more than ${fmtMoney(Math.round(limit * C.BANK.badDebtRatio))} and your reputation will bleed. Borrow to grow fast, but pay it down.</div>
+      <div class="row" style="flex-wrap:wrap;gap:6px">${borrowBtns}</div>
+      <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:6px">${repayBtns}</div>
+      <div class="section-title" style="margin-top:14px">Property</div>
+      ${tier ? `<div class="row"><span class="muted">Expand land to ${tier.cols} × ${tier.rows}</span><span class="spacer"></span><button class="btn btn-sm ${S.cash >= tier.cost ? 'btn-primary' : 'disabled'}" ${S.cash >= tier.cost ? 'data-act="buyland"' : ''}>Buy $${tier.cost.toLocaleString()}</button></div>` : '<span class="muted">You own all the land in the Hollow.</span>'}
+    </div>
+    <div class="modal-foot"><button class="btn" data-act="closemodal">Close</button></div></div></div>`;
+}
+
+function helpModalHTML() {
+  const tips = C.TIPS.map((t) => `<li>${esc(t)}</li>`).join('');
+  return `<div class="modal-scrim" data-act="closemodal"><div class="modal" data-stop>
+    <div class="modal-head"><b>How to play</b></div>
+    <div class="modal-body"><ul style="margin:0;padding-left:18px;line-height:1.7">${tips}</ul>
+    <div class="help" style="margin-top:10px">Keys: 1-4 panels · Space pause · +/- speed · z/x or wheel zoom · arrows pan · Esc cancel. Win by hitting $1,000,000/day revenue OR finishing the Serum Run at reputation 1000.</div></div>
+    <div class="modal-foot"><button class="btn btn-primary" data-act="closemodal">Got it</button></div></div></div>`;
+}
+
+function victoryModalHTML() {
+  const r = S.ui.winReason;
+  const msg = r === 'serum'
+    ? 'You ran the Serum Run from Nenana to Nome and finished. They will tell stories about Lantern Hollow for years. You beat the game, Keeper.'
+    : 'Your farm now earns over $1,000,000 a day. Lantern Hollow is the most beloved husky farm in the North. You beat the game, Keeper.';
+  return `<div class="modal-scrim" data-act="closemodal"><div class="modal" data-stop>
+    <div class="modal-head"><b>🏆 You Win!</b></div>
+    <div class="modal-body"><div style="font-size:40px;text-align:center">🐺❄️🏆</div><p>${msg}</p><div class="help">Keep playing as long as you like, the Hollow is yours.</div></div>
+    <div class="modal-foot"><button class="btn btn-primary" data-act="closemodal">Keep playing</button></div></div></div>`;
+}
+
 function renderModal() {
   const root = $('modal-root');
+  if (S.ui.modal === 'bank') { root.innerHTML = bankModalHTML(); return; }
+  if (S.ui.modal === 'help') { root.innerHTML = helpModalHTML(); return; }
+  if (S.ui.modal === 'victory') { root.innerHTML = victoryModalHTML(); return; }
   const sel = S.ui.selected;
   if (sel?.type === 'building') {
     const b = S.buildings.find((x) => x.id === sel.id); const def = b && C.BUILDINGS[b.key];
@@ -326,6 +394,8 @@ function renderModal() {
   root.innerHTML = '';
 }
 
+export function showVictory(reason) { S.ui.winReason = reason; S.ui.modal = 'victory'; S.ui.dirty = true; }
+
 // ---- public -------------------------------------------------------------
 export function refreshHud() { ensureUiState(); updateChrome(); }
 
@@ -333,12 +403,14 @@ export function refreshUI() {
   ensureUiState();
   updateChrome();
   const host = $('sidebar');
+  let panel;
   switch (S.ui.panel) {
-    case 'dogs': host.innerHTML = dogsPanel(); break;
-    case 'market': host.innerHTML = marketPanel(); break;
-    case 'missions': host.innerHTML = missionsPanel(); break;
-    case 'build': default: host.innerHTML = buildPanel(); break;
+    case 'dogs': panel = dogsPanel(); break;
+    case 'market': panel = marketPanel(); break;
+    case 'missions': panel = missionsPanel(); break;
+    case 'build': default: panel = buildPanel(); break;
   }
+  host.innerHTML = coachBanner() + panel;
   renderModal();
   S.ui.dirty = false;
 }
@@ -354,13 +426,11 @@ export function renderToasts(dt) {
   if (root.dataset.sig !== html) { root.innerHTML = html; root.dataset.sig = html; }
 }
 
-function showHelp() {
-  const tips = C.TIPS.map((t) => `<li>${esc(t)}</li>`).join('');
-  $('modal-root').innerHTML = `<div class="modal-scrim" data-act="closemodal"><div class="modal" data-stop>
-    <div class="modal-head"><b>How to play</b></div>
-    <div class="modal-body"><ul style="margin:0;padding-left:18px;line-height:1.7">${tips}</ul>
-    <div class="help" style="margin-top:10px">Keys: 1-4 panels · Space pause · +/- speed · Esc cancel</div></div>
-    <div class="modal-foot"><button class="btn btn-primary" data-act="closemodal">Got it</button></div></div></div>`;
+function zoomCam(f) {
+  const cx = S.cam.x + (C.VIEW.w / S.cam.zoom) / 2, cy = S.cam.y + (C.VIEW.h / S.cam.zoom) / 2;
+  S.cam.zoom = clamp(S.cam.zoom * f, 0.1, 3);
+  S.cam.x = cx - (C.VIEW.w / S.cam.zoom) / 2;
+  S.cam.y = cy - (C.VIEW.h / S.cam.zoom) / 2;
 }
 
 // ---- delegated click handling ------------------------------------------
@@ -387,13 +457,21 @@ function handle(act, a, b, e) {
     case 'speed': S.speed = +a; S.paused = false; break;
     case 'pause': S.paused = !S.paused; break;
     case 'save': if (saveGame()) toast('Saved ✓', 'good', 1.6); break;
-    case 'help': showHelp(); break;
+    case 'help': S.ui.modal = 'help'; break;
+    case 'bank': S.ui.modal = 'bank'; break;
+    case 'zoomin': zoomCam(1.2); break;
+    case 'zoomout': zoomCam(1 / 1.2); break;
+    case 'borrow': borrow(+a); break;
+    case 'repay': repay(+a); break;
+    case 'buyland': buyProperty(); break;
     case 'reset': if (confirm('Start a brand-new farm? This clears your current save.')) { newGame(); setPanel('build'); } break;
     case 'buyfood': buyFood(); break;
+    case 'buyfoodtier': { const t = C.FOOD_TIERS[+a]; if (t) buyFood(t.units, t.cost); break; }
     case 'buildcat': S.ui.buildCat = a; clearBuildSelection(); break;
     case 'buildsel': setBuildSelection(a); break;
     case 'buy': buyDog(a, b === 'adult'); break;
     case 'feed': feedDog(dog(a)); break;
+    case 'feedmax': feedDog(dog(a), 'max'); break;
     case 'play': playWithDog(dog(a)); break;
     case 'feedall': feedAll(); break;
     case 'playall': playWithAll(); break;
@@ -411,6 +489,8 @@ function handle(act, a, b, e) {
     case 'breedgo': { const [x, y] = S.ui.breedPick.map(dog); if (breedDogs(x, y)) S.ui.breedPick = []; break; }
     case 'breedclear': case 'breedclr': S.ui.breedPick = []; break;
     case 'assemble': S.ui.assignMission = a; S.ui.assignTeam = []; break;
+    case 'bestteam': S.ui.assignTeam = bestTeam(S.ui.assignMission); break;
+    case 'clearteam': S.ui.assignTeam = []; break;
     case 'cancelassemble': S.ui.assignMission = null; S.ui.assignTeam = []; break;
     case 'teampick': {
       const def = C.MISSIONS[S.ui.assignMission]; if (!def) break;
@@ -421,6 +501,6 @@ function handle(act, a, b, e) {
     }
     case 'launch': startMission(a, S.ui.assignTeam); break;
     case 'removebld': removeBuilding(a); select(null); break;
-    case 'closemodal': select(null); $('modal-root').innerHTML = ''; break;
+    case 'closemodal': S.ui.modal = null; select(null); $('modal-root').innerHTML = ''; break;
   }
 }

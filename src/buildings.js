@@ -1,7 +1,7 @@
 // buildings.js — grid placement, removal, and spatial helpers.
 // Imports state/config/util + economy. Never imports ui/render/input.
 
-import { S, cellAt, inBounds, toast, pushFx, isUnlocked } from './state.js';
+import { S, cellAt, inBounds, inLand, toast, pushFx, isUnlocked } from './state.js';
 import * as C from './config.js';
 import { uid, rand } from './util.js';
 import { spend, earn, canAfford } from './economy.js';
@@ -31,8 +31,23 @@ export function canPlace(key, gx, gy) {
   if (def.category !== 'house' && !hasHouse()) return { ok: false, reason: "Build the Keeper's Cabin first." };
   if (key === 'keepers_cabin' && S.buildings.some((b) => b.key === 'keepers_cabin')) return { ok: false, reason: 'You already have a cabin.' };
   if (!footprintCells(gx, gy, def.size.w, def.size.h)) return { ok: false, reason: 'Blocked or out of bounds.' };
+  for (let y = gy; y < gy + def.size.h; y++) for (let x = gx; x < gx + def.size.w; x++) if (!inLand(x, y)) return { ok: false, reason: 'That land is not yours yet. Buy property to expand.' };
   if (!canAfford(def.cost)) return { ok: false, reason: `Need $${def.cost}.` };
   return { ok: true };
+}
+
+// ---- property (land expansion) -----------------------------------------
+export const nextProperty = () => C.PROPERTY[S.landLevel + 1] || null;
+
+export function buyProperty() {
+  const tier = nextProperty();
+  if (!tier) { toast('You already own all the land.', 'info'); return false; }
+  if (!spend(tier.cost)) { toast(`Buying that land costs $${tier.cost}.`, 'warn'); return false; }
+  S.landLevel += 1;
+  S.land = { cols: tier.cols, rows: tier.rows };
+  toast(`Property expanded to ${tier.cols} × ${tier.rows}. Room to grow!`, 'good', 4);
+  S.ui.dirty = true;
+  return true;
 }
 
 export function placeBuilding(key, gx, gy) {
@@ -84,8 +99,8 @@ export const housesBuilt = () => S.buildings.filter((b) => C.BUILDINGS[b.key]?.c
 // Where tourists enter the farm: just below the house door, else bottom-centre.
 export function gatePoint() {
   const house = housesBuilt()[0];
-  if (house) { const d = doorOf(house); return { x: d.x, y: Math.min(d.y + T(), S.grid.rows * T() - 6) }; }
-  return { x: (S.grid.cols / 2) * T(), y: S.grid.rows * T() - 6 };
+  if (house) { const d = doorOf(house); return { x: d.x, y: Math.min(d.y + T(), S.land.rows * T() - 6) }; }
+  return { x: (S.land.cols / 2) * T(), y: S.land.rows * T() - 6 };
 }
 
 // Hit-test a world point against placed buildings; returns the building or null.

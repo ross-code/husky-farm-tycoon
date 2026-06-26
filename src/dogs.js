@@ -17,7 +17,7 @@ function homeAnchor() {
     const def = C.BUILDINGS[house.key];
     return { x: (house.gx + def.size.w / 2) * tile + rand(-30, 30), y: (house.gy + def.size.h + 0.4) * tile + rand(-10, 20) };
   }
-  return { x: (cols / 2) * tile + rand(-40, 40), y: (rows / 2) * tile + rand(-30, 30) };
+  return { x: (S.land.cols / 2) * tile + rand(-40, 40), y: (S.land.rows / 2) * tile + rand(-30, 30) };
 }
 
 function pickName() {
@@ -85,11 +85,23 @@ export function buyDog(breedKey, asAdult = false) {
   return dog;
 }
 
-export function feedDog(dog) {
+// Food units needed to fully top a dog off.
+export const feedCost = (dog) => Math.max(0, Math.ceil((100 - dog.hunger) * E.foodPerHunger));
+
+// Feed a dog. amount: a number of hunger points, 'max' to top off, or undefined for a snack (+30).
+export function feedDog(dog, amount) {
   if (!dog) return;
-  if (S.food < 2 && !spend(3)) { toast('No food and no cash to feed.', 'warn'); return; }
-  if (S.food >= 2) S.food -= 2;
-  dog.hunger = clamp(dog.hunger + 32, 0, 100);
+  let want = amount === 'max' ? (100 - dog.hunger) : (typeof amount === 'number' ? amount : 30);
+  want = clamp(want, 0, 100 - dog.hunger);
+  if (want <= 0) { if (amount) toast(`${dog.name} is already full.`, 'info', 1.2); return; }
+  const need = Math.max(1, Math.ceil(want * E.foodPerHunger));
+  if (S.food >= need) { S.food -= need; }
+  else { // buy the shortfall with cash
+    const cashCost = Math.ceil((need - S.food) * E.foodUnitCost);
+    if (!spend(cashCost)) { toast('Not enough food or cash to feed.', 'warn'); return; }
+    S.food = 0;
+  }
+  dog.hunger = clamp(dog.hunger + want, 0, 100);
   dog.happiness = clamp(dog.happiness + E.happyPerFeed, 0, 100);
   pushFx(dog.x, dog.y - 16, '❤', C.PALETTE.teal, 0.9);
   S.ui.dirty = true;
@@ -107,8 +119,8 @@ export function playWithDog(dog) {
 export function feedAll() {
   if (!S.dogs.length) { toast('No dogs to feed yet.', 'info', 1.4); return; }
   let n = 0;
-  for (const d of S.dogs) { const before = d.hunger; feedDog(d); if (d.hunger > before) n++; }
-  if (n) toast(`Fed ${n} dog${n > 1 ? 's' : ''}.`, 'good', 1.6);
+  for (const d of S.dogs) { const before = d.hunger; feedDog(d, 'max'); if (d.hunger > before) n++; }
+  if (n) toast(`Topped off ${n} dog${n > 1 ? 's' : ''}.`, 'good', 1.6);
 }
 export function playWithAll() {
   if (!S.dogs.length) { toast('No dogs to play with yet.', 'info', 1.4); return; }
@@ -180,10 +192,13 @@ export function trainDog(dog, stat) {
   if (dog.stage !== 'adult') { toast('Puppies are too young to train hard.', 'warn'); return false; }
   if (dog.energy < E.trainEnergyCost) { toast(`${dog.name} is too tired to train.`, 'warn'); return false; }
   if (dog.stats[stat] >= dog.potential[stat]) { toast(`${dog.name} has maxed ${stat}.`, 'info'); return false; }
-  if (!spend(E.trainCostBase)) { toast(`Training costs $${E.trainCostBase}.`, 'warn'); return false; }
+  const costCut = S.buildings.reduce((m, b) => Math.max(m, C.BUILDINGS[b.key]?.trainCostCut || 0), 0);
+  const cost = Math.round(E.trainCostBase * (1 - costCut));
+  if (!spend(cost)) { toast(`Training costs $${cost}.`, 'warn'); return false; }
+  const facilityBonus = 1 + S.buildings.reduce((m, b) => m + (C.BUILDINGS[b.key]?.trainBonus || 0), 0);
   const room = 1 - dog.stats[stat] / dog.potential[stat];
   const happyMult = 0.5 + dog.happiness / 100;
-  const gain = Math.max(1, Math.round(E.trainGainBase * room * happyMult));
+  const gain = Math.max(1, Math.round(E.trainGainBase * room * happyMult * facilityBonus));
   dog.stats[stat] = clamp(dog.stats[stat] + gain, 0, dog.potential[stat]);
   dog.energy = clamp(dog.energy - E.trainEnergyCost, 0, 100);
   pushFx(dog.x, dog.y - 16, `+${gain} ${stat.slice(0, 3).toUpperCase()}`, C.PALETTE.brand, 1.1);
@@ -226,6 +241,22 @@ export function breedDogs(a, b) {
   toast(C.FLAVOR.breed[randInt(0, C.FLAVOR.breed.length - 1)].replace('{a}', a.name).replace('{b}', b.name).replace('{pup}', pup.name), 'good');
   S.ui.dirty = true;
   return pup;
+}
+
+// Each breeding den auto-produces a pup every config.autoBreedDays, given an eligible
+// pair and free housing. This makes the dens passively useful and scales to a big pack.
+export function autoBreedTick() {
+  const dens = S.buildings.filter((b) => C.BUILDINGS[b.key]?.enables === 'breed').length;
+  if (!dens) return;
+  if (S.time.day - (S.lastAutoBreedDay || 0) < C.ECONOMY.autoBreedDays) return;
+  S.lastAutoBreedDay = S.time.day;
+  for (let i = 0; i < dens; i++) {
+    if (!hasRoom()) break;
+    const ready = (sex) => S.dogs.filter((d) => d.stage === 'adult' && d.sex === sex && !d.missionId && !d.illness && S.time.day >= d.breedCooldownDay);
+    const males = ready('M'), females = ready('F');
+    if (!males.length || !females.length) break;
+    breedDogs(choice(males), choice(females));
+  }
 }
 
 export function sellDog(dog) {

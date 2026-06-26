@@ -8,7 +8,7 @@ import { clamp, hexToRgb, withAlpha, lerp } from './util.js';
 import { footprintCells } from './buildings.js';
 
 const P = C.PALETTE;
-let canvas, ctx, ground, gctx, W, H, lastNow = 0;
+let canvas, ctx, ground, gctx, WW, WH, VW, VH, lastNow = 0; // WW/WH = world, VW/VH = viewport
 const snow = [];
 
 const col = (token) => P[token] || token;
@@ -30,51 +30,62 @@ function hash(x, y) {
   return h - Math.floor(h);
 }
 
+// Map a client point to world coordinates through the camera.
 export function screenToWorld(cx, cy) {
   const r = canvas.getBoundingClientRect();
-  return { x: (cx - r.left) * (canvas.width / r.width), y: (cy - r.top) * (canvas.height / r.height) };
+  const px = (cx - r.left) * (VW / r.width);
+  const py = (cy - r.top) * (VH / r.height);
+  return { x: px / S.cam.zoom + S.cam.x, y: py / S.cam.zoom + S.cam.y };
 }
 export function worldToScreen(x, y) {
-  const r = canvas.getBoundingClientRect();
-  return { x: r.left + x * (r.width / canvas.width), y: r.top + y * (r.height / canvas.height) };
+  return { x: (x - S.cam.x) * S.cam.zoom, y: (y - S.cam.y) * S.cam.zoom };
 }
 
 export function initRender(cv) {
   canvas = cv;
   ctx = canvas.getContext('2d');
-  W = S.grid.cols * S.grid.tile;
-  H = S.grid.rows * S.grid.tile;
-  canvas.width = W; canvas.height = H;
+  WW = S.grid.cols * S.grid.tile;
+  WH = S.grid.rows * S.grid.tile;
+  VW = C.VIEW.w; VH = C.VIEW.h;
+  canvas.width = VW; canvas.height = VH;
   buildGround();
-  for (let i = 0; i < 70; i++) snow.push(newFlake(true));
+  for (let i = 0; i < 80; i++) snow.push(newFlake(true));
 }
 
 function newFlake(spread) {
   const near = Math.random() < 0.35;
   return {
-    x: Math.random() * W, y: spread ? Math.random() * H : -6,
+    x: Math.random() * VW, y: spread ? Math.random() * VH : -6,
     r: near ? 1.6 + Math.random() * 1.6 : 0.6 + Math.random(),
     sp: near ? 22 + Math.random() * 20 : 10 + Math.random() * 10,
     drift: (Math.random() - 0.5) * 14, ph: Math.random() * 6.28, near,
   };
 }
 
-// Cache the static snowy ground (drift shading + sparkle) once.
+// Keep the camera within the world and within zoom limits.
+function clampCamera() {
+  const cam = S.cam;
+  cam.zoom = clamp(cam.zoom, Math.max(VW / WW, VH / WH), 2.2);
+  cam.x = clamp(cam.x, 0, Math.max(0, WW - VW / cam.zoom));
+  cam.y = clamp(cam.y, 0, Math.max(0, WH - VH / cam.zoom));
+}
+
+// Cache the static snowy ground (drift shading + sparkle) once, at full world size.
 function buildGround() {
   ground = document.createElement('canvas');
-  ground.width = W; ground.height = H;
+  ground.width = WW; ground.height = WH;
   gctx = ground.getContext('2d');
-  gctx.fillStyle = col('snow'); gctx.fillRect(0, 0, W, H);
+  gctx.fillStyle = col('snow'); gctx.fillRect(0, 0, WW, WH);
   const t = S.grid.tile;
   // Soft rolling drifts via large low-alpha radial gradients (no visible tile seams).
-  for (let i = 0; i < 16; i++) {
-    const cx = hash(i * 12.9, 7.1) * W, cy = hash(i * 4.3, 19.7) * H, rad = 90 + hash(i * 2.1, 3.3) * 170;
+  for (let i = 0; i < 40; i++) {
+    const cx = hash(i * 12.9, 7.1) * WW, cy = hash(i * 4.3, 19.7) * WH, rad = 120 + hash(i * 2.1, 3.3) * 240;
     const light = i % 2 === 0;
     const c2 = light ? col('snowHi') : col('snowShade');
     const g = gctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
     g.addColorStop(0, withAlpha(c2, light ? 0.10 : 0.13));
     g.addColorStop(1, withAlpha(c2, 0));
-    gctx.fillStyle = g; gctx.fillRect(0, 0, W, H);
+    gctx.fillStyle = g; gctx.fillRect(0, 0, WW, WH);
   }
   // Sparse sparkle grain so the snow reads as texture, not flat.
   for (let gy = 0; gy < S.grid.rows; gy++) {
@@ -468,7 +479,7 @@ function drawSnow(dt, now) {
   ctx.fillStyle = withAlpha('#ffffff', 0.7);
   for (const f of snow) {
     f.y += f.sp * dt; f.x += Math.sin(now / 1000 + f.ph) * f.drift * dt;
-    if (f.y > H + 4) { Object.assign(f, newFlake(false)); }
+    if (f.y > VH + 4) { Object.assign(f, newFlake(false)); }
     ctx.globalAlpha = f.near ? 0.7 : 0.4;
     ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, 7); ctx.fill();
   }
@@ -489,7 +500,7 @@ function dayNightOverlay() {
     color = '#243A6E'; alpha = clamp(a, 0, 0.5);
   }
   if (!color || alpha <= 0) return;
-  ctx.fillStyle = withAlpha(color, alpha); ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = withAlpha(color, alpha); ctx.fillRect(0, 0, VW, VH);
 }
 
 function drawGhost() {
@@ -497,11 +508,13 @@ function drawGhost() {
   if (!key || !hov) return;
   const def = C.BUILDINGS[key]; if (!def) return;
   const t = S.grid.tile;
-  // grid overlay
-  ctx.strokeStyle = withAlpha('#ffffff', 0.18); ctx.lineWidth = 1;
-  for (let gx = 0; gx <= S.grid.cols; gx++) { ctx.beginPath(); ctx.moveTo(gx * t, 0); ctx.lineTo(gx * t, H); ctx.stroke(); }
-  for (let gy = 0; gy <= S.grid.rows; gy++) { ctx.beginPath(); ctx.moveTo(0, gy * t); ctx.lineTo(W, gy * t); ctx.stroke(); }
-  const ok = !!footprintCells(hov.gx, hov.gy, def.size.w, def.size.h) && S.cash >= def.cost;
+  // grid overlay across the owned land only
+  const lw = S.land.cols * t, lh = S.land.rows * t;
+  ctx.strokeStyle = withAlpha('#ffffff', 0.16); ctx.lineWidth = 1;
+  for (let gx = 0; gx <= S.land.cols; gx++) { ctx.beginPath(); ctx.moveTo(gx * t, 0); ctx.lineTo(gx * t, lh); ctx.stroke(); }
+  for (let gy = 0; gy <= S.land.rows; gy++) { ctx.beginPath(); ctx.moveTo(0, gy * t); ctx.lineTo(lw, gy * t); ctx.stroke(); }
+  const inLand = hov.gx >= 0 && hov.gy >= 0 && hov.gx + def.size.w <= S.land.cols && hov.gy + def.size.h <= S.land.rows;
+  const ok = inLand && !!footprintCells(hov.gx, hov.gy, def.size.w, def.size.h) && S.cash >= def.cost;
   const x = hov.gx * t, y = hov.gy * t, w = def.size.w * t, h = def.size.h * t;
   ctx.fillStyle = ok ? 'rgba(45,182,165,0.30)' : 'rgba(224,84,78,0.32)';
   roundRect(ctx, x + 1, y + 1, w - 2, h - 2, 6); ctx.fill();
@@ -512,16 +525,75 @@ function drawGhost() {
   if (!ok) { ctx.fillStyle = col('danger'); ctx.font = 'bold 18px system-ui'; ctx.fillText('✕', x + w / 2, y + h / 2); }
 }
 
+// Shade land you don't own yet, with a dashed fence at the border.
+function drawUnownedLand() {
+  const t = S.grid.tile, lc = S.land.cols, lr = S.land.rows;
+  if (lc >= S.grid.cols && lr >= S.grid.rows) return;
+  ctx.fillStyle = 'rgba(8,16,34,0.5)';
+  if (lc < S.grid.cols) ctx.fillRect(lc * t, 0, WW - lc * t, WH);
+  if (lr < S.grid.rows) ctx.fillRect(0, lr * t, lc * t, WH - lr * t);
+  ctx.strokeStyle = withAlpha(col('woodDk'), 0.85); ctx.lineWidth = 3; ctx.setLineDash([8, 6]);
+  ctx.beginPath();
+  if (lc < S.grid.cols) { ctx.moveTo(lc * t, 0); ctx.lineTo(lc * t, lr * t); }
+  if (lr < S.grid.rows) { ctx.moveTo(0, lr * t); ctx.lineTo(lc * t, lr * t); }
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = withAlpha('#ffffff', 0.5); ctx.font = '15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if (lc < S.grid.cols) ctx.fillText('Unowned land — buy property at the bank', lc * t + Math.min(WW - lc * t, 320) / 2, lr * t / 2);
+}
+
+// Active missions: the team pulls a sled across the owned land, position = progress.
+function drawSledDog(c, now, k) {
+  const gait = Math.sin(now / 90 + k * 0.8);
+  ctx.fillStyle = c.base; ctx.beginPath(); ctx.ellipse(0, 0, 8, 4.5, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = c.belly; ctx.beginPath(); ctx.ellipse(1, 1.6, 5, 2.2, 0, 0, 7); ctx.fill();
+  ctx.strokeStyle = c.saddle; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+  const a = gait * 3;
+  ctx.beginPath(); ctx.moveTo(-3, 3); ctx.lineTo(-3 + a, 8); ctx.moveTo(4, 3); ctx.lineTo(4 - a, 8); ctx.stroke();
+  ctx.fillStyle = c.base; ctx.beginPath(); ctx.arc(8, -1, 3.6, 0, 7); ctx.fill();
+  ctx.fillStyle = c.saddle; ctx.beginPath(); ctx.moveTo(8, -4); ctx.lineTo(10, -7); ctx.lineTo(11, -3); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = c.belly; ctx.beginPath(); ctx.ellipse(11, 0, 2, 1.5, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#1e1e22'; ctx.beginPath(); ctx.arc(9, -1.5, 0.8, 0, 7); ctx.fill();
+  ctx.strokeStyle = c.base; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(-8, -1); ctx.quadraticCurveTo(-12, -3, -11, -6); ctx.stroke();
+}
+
+function drawSledTeams(now) {
+  if (!S.missions.active.length) return;
+  const t = S.grid.tile, laneW = S.land.cols * t;
+  S.missions.active.forEach((inst, i) => {
+    const def = C.MISSIONS[inst.key]; if (!def) return;
+    const team = inst.dogIds.map((id) => S.dogs.find((d) => d.id === id)).filter(Boolean);
+    const n = team.length || def.teamSize;
+    const pct = clamp(inst.elapsed / inst.duration, 0, 1);
+    const span = Math.max(60, laneW - (n * 16 + 80));
+    const x = 36 + pct * span, y = (1.4 + (i % 4) * 1.8) * t;
+    ctx.save(); ctx.translate(x, y);
+    ctx.fillStyle = withAlpha('#2A3550', 0.16); ctx.beginPath(); ctx.ellipse(n * 8, 9, n * 9 + 12, 4, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = col('woodDk'); roundRect(ctx, -16, -5, 18, 9, 2); ctx.fill();
+    ctx.fillStyle = col('brand'); roundRect(ctx, -14, -11, 11, 7, 2); ctx.fill();
+    ctx.strokeStyle = withAlpha(col('woodDk'), 0.7); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(n * 16 + 8, 0); ctx.stroke();
+    for (let k = 0; k < n; k++) { ctx.save(); ctx.translate(16 * (k + 1), 0); drawSledDog(C.COATS[team[k]?.coatId] || C.COATS.gray, now, k); ctx.restore(); }
+    ctx.restore();
+  });
+}
+
 // ---- main frame ---------------------------------------------------------
 export function render(now) {
   if (!ctx) return;
   const dt = clamp((now - lastNow) / 1000, 0, 0.1); lastNow = now;
+  clampCamera();
 
-  ctx.clearRect(0, 0, W, H);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, VW, VH);
+
+  // ---- world space (camera transform) ----
+  ctx.save();
+  ctx.translate(-S.cam.x * S.cam.zoom, -S.cam.y * S.cam.zoom);
+  ctx.scale(S.cam.zoom, S.cam.zoom);
+
   ctx.drawImage(ground, 0, 0);
+  drawUnownedLand();
   drawPaths();
 
-  // y-sorted entity pass
   const items = [];
   for (const b of S.buildings) items.push({ y: (b.gy + b.h) * S.grid.tile, kind: 'b', ref: b });
   for (const d of S.dogs) if (!d.missionId) items.push({ y: d.y, kind: 'd', ref: d });
@@ -534,7 +606,11 @@ export function render(now) {
   }
 
   drawFx(dt, now);
+  drawSledTeams(now);
+  drawGhost();
+  ctx.restore();
+
+  // ---- screen space overlays ----
   drawSnow(dt, now);
   dayNightOverlay();
-  drawGhost();
 }

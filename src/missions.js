@@ -21,6 +21,17 @@ export function rollAvailable() {
 export const eligibleDogs = () =>
   S.dogs.filter((d) => d.stage === 'adult' && !d.missionId && !d.illness && d.energy >= MIN_MISSION_ENERGY);
 
+// Pick the strongest eligible team for a mission (best success chance).
+export function bestTeam(missionKey) {
+  const def = C.MISSIONS[missionKey]; if (!def) return [];
+  const score = (d) => {
+    let s = 0;
+    for (const [stat, w] of Object.entries(def.focus)) s += w * d.stats[stat];
+    return s * (0.55 + 0.45 * d.energy / 100) * (0.7 + 0.3 * d.happiness / 100);
+  };
+  return [...eligibleDogs()].sort((a, b) => score(b) - score(a)).slice(0, def.teamSize).map((d) => d.id);
+}
+
 // Weighted team power for a mission's focus stats, modulated by energy & happiness.
 function teamScore(def, dogs) {
   if (!dogs.length) return 0;
@@ -104,7 +115,7 @@ function resolve(inst) {
     for (const d of dogs) d.stats[focusStat] = clamp(d.stats[focusStat] + 1, 0, d.potential[focusStat] + 2);
     freeDogs(inst, 30);
     const line = choice(C.FLAVOR.win).replace('{mission}', def.name).replace('{dog}', lead?.name || 'The lead dog');
-    if (def.awardsElvis) { unlock('breeds', 'elvis'); toast(C.FLAVOR.serumWin[0], 'good', 8); }
+    if (def.awardsElvis) { unlock('breeds', 'elvis'); S.stats.serumWon = true; toast(C.FLAVOR.serumWin[0], 'good', 8); }
     else toast(line, 'good');
     pushFx(gate.x, gate.y - 28, '🏆', C.PALETTE.gold, 1.8);
   } else if (r < inst.successChance + 0.25) {

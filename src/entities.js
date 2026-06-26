@@ -10,8 +10,9 @@ import { isDaytime } from './economy.js';
 const PARKA = ['#D26B6B', '#5E8FCB', '#E0A93F', '#6BB07A', '#9B6FB0', '#4C4C57', '#C9698F'];
 const SKIN = ['#F3C9A8', '#D9A878', '#A9774E', '#7A5436'];
 
-const worldW = () => S.grid.cols * S.grid.tile;
-const worldH = () => S.grid.rows * S.grid.tile;
+// Entities roam the OWNED land only, not the unowned (dark) territory.
+const worldW = () => S.land.cols * S.grid.tile;
+const worldH = () => S.land.rows * S.grid.tile;
 
 function randomWalkTarget() {
   const t = S.grid.tile;

@@ -65,7 +65,7 @@ export function incomePerDay() {
   const appeal = S.appeal;
   const adults = S.dogs.filter((d) => d.stage === 'adult').length;
   const repBonus = 1 + S.reputation / 120;
-  const dogFactor = 1 + 0.5 * Math.min(adults, 12) / 12;
+  const dogFactor = 1 + adults / 25; // scales with the whole pack now (no hard cap)
   const avgHappy = S.dogs.length ? sum(S.dogs, (d) => d.happiness) / S.dogs.length : 70;
   const happyFactor = clamp(avgHappy / 70, 0.3, 1.15);
   return appeal * E.touristYield * repBonus * dogFactor * happyFactor * spendMultiplier();
@@ -75,8 +75,12 @@ export function incomePerDay() {
 export function netPerDay() {
   const upkeep = sum(S.buildings, (b) => C.BUILDINGS[b.key]?.upkeep || 0);
   const food = S.dogs.length * E.foodPerDogPerDay * (1 - foodDiscount()) * E.foodUnitCost;
-  return incomePerDay() - upkeep - food;
+  const interest = (S.loan?.owed || 0) * C.BANK.interestPerDay;
+  return incomePerDay() - upkeep - food - interest;
 }
+
+// Gross tourist revenue/day — the metric for the $1M/day win.
+export const dailyRevenue = () => incomePerDay();
 
 let _coinAcc = 0;
 // Continuous tourist income, paid only during daylight.
@@ -128,9 +132,55 @@ export function dailyUpkeep() {
     }
   }
 
+  // Auto-feeders (Feeding Trough / Provisions Post / Mess Hall) top dogs up further,
+  // consuming extra food from the stock.
+  const messHall = S.buildings.some((b) => C.BUILDINGS[b.key]?.autoFeedFull);
+  const autoFrac = S.buildings.reduce((m, b) => Math.max(m, C.BUILDINGS[b.key]?.autoFeed || 0), 0);
+  if ((messHall || autoFrac > 0) && S.dogs.length) {
+    for (const d of S.dogs) {
+      const want = messHall ? (100 - d.hunger) : Math.min(100 - d.hunger, autoFrac * 100);
+      if (want <= 0) continue;
+      const cost = Math.ceil(want * E.foodPerHunger);
+      if (S.food >= cost) { S.food -= cost; d.hunger = clamp(d.hunger + want, 0, 100); }
+      else if (S.food > 0) { d.hunger = clamp(d.hunger + S.food / E.foodPerHunger, 0, 100); S.food = 0; break; }
+    }
+  }
+
+  // Bank: interest compounds daily; runaway debt bleeds reputation.
+  if (S.loan && S.loan.owed > 0) {
+    S.loan.owed = Math.round(S.loan.owed * (1 + C.BANK.interestPerDay));
+    if (S.loan.owed > loanLimit() * C.BANK.badDebtRatio) {
+      S.loan.missedDays = (S.loan.missedDays || 0) + 1;
+      S.reputation = Math.max(0, S.reputation - C.BANK.badDebtRepPerDay);
+      if (S.loan.missedDays === 1 || S.loan.missedDays % 3 === 0) toast('Your debt is out of control. The bank is not pleased: reputation is falling.', 'bad', 5);
+    } else { S.loan.missedDays = 0; }
+  }
+
   // A little reputation drifts in from happy visitors.
   S.reputation += clamp(S.appeal / 60, 0, 2.5);
   S.ui.dirty = true;
+}
+
+// ---- the bank -----------------------------------------------------------
+export function loanLimit() { return Math.round(C.BANK.baseLimit + S.reputation * C.BANK.limitPerRep); }
+export function loanAvailable() { return Math.max(0, loanLimit() - (S.loan?.owed || 0)); }
+
+export function borrow(amount) {
+  amount = Math.floor(amount);
+  if (amount <= 0) return false;
+  if (amount > loanAvailable()) { toast(`The bank will lend you up to $${loanAvailable()} right now.`, 'warn'); return false; }
+  S.loan.owed += amount; S.cash += amount; S.ui.dirty = true;
+  toast(`Borrowed $${amount}. You now owe $${S.loan.owed} (${Math.round(C.BANK.interestPerDay * 100)}%/day interest).`, 'info', 5);
+  return true;
+}
+
+export function repay(amount) {
+  amount = Math.min(Math.floor(amount), S.loan.owed, Math.floor(S.cash));
+  if (amount <= 0) { toast('Nothing to repay, or not enough cash.', 'warn'); return false; }
+  S.cash -= amount; S.loan.owed -= amount; if (S.loan.owed <= 0) S.loan.missedDays = 0;
+  S.ui.dirty = true;
+  toast(S.loan.owed > 0 ? `Repaid $${amount}. Still owe $${S.loan.owed}.` : `Repaid $${amount}. Loan cleared!`, S.loan.owed > 0 ? 'info' : 'good');
+  return true;
 }
 
 // ---- dog valuation ------------------------------------------------------
@@ -143,9 +193,9 @@ export function dogMarketValue(dog) {
 }
 export function sellPrice(dog) { return Math.round(dogMarketValue(dog) * E.dogSellFrac); }
 
-// Buy a batch of food from the HUD control.
-export function buyFood(units = C.ECONOMY.foodBuyBatch) {
-  const cost = Math.round(units * E.foodUnitCost);
+// Buy food. With a tier you pass its discounted cost; otherwise it's per-unit.
+export function buyFood(units = C.ECONOMY.foodBuyBatch, cost) {
+  cost = cost ?? Math.round(units * E.foodUnitCost);
   if (!spend(cost)) { toast('Not enough cash for food.', 'warn'); return false; }
   S.food += units;
   toast(`Bought ${units} food for $${cost}.`, 'good');

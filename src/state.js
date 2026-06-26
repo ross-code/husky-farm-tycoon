@@ -18,9 +18,17 @@ function freshState() {
     paused: false,
     speed: 1,                // 1 | 2 | 3 game-speed multiplier
     over: false,
+    won: false,              // has the player hit a win condition (sandbox continues after)
     elvisAcquired: false,    // the one and only Elvis can be obtained once, ever
 
     time: { day: 1, tod: 0.28, elapsed: 0 }, // tod = fraction of day [0,1); start mid-morning
+
+    cam: { x: 0, y: 0, zoom: 1 },        // world-space camera (set in newGame)
+    land: { cols: 0, rows: 0 },          // buildable area (grows by buying property)
+    landLevel: 0,                        // index into config.PROPERTY
+    loan: { owed: 0, missedDays: 0 },    // bank debt + how long it has been unservable
+    coachStep: -1,                       // current onboarding objective index (-1 = none yet)
+    lastAutoBreedDay: 0,                 // throttles auto-breeding from dens
 
     cash: 0,
     reputation: 0,           // 0..100 appeal/reputation that drives tourist traffic
@@ -73,6 +81,9 @@ export function newGame() {
   const fresh = freshState();
   Object.assign(S, fresh);
   S.grid = buildGrid();
+  S.landLevel = 0;
+  S.land = { cols: C.PROPERTY[0].cols, rows: C.PROPERTY[0].rows };
+  fitCamToLand();
   S.cash = C.ECONOMY.startingCash;
   S.reputation = C.ECONOMY.startingReputation ?? 5;
   S.food = C.ECONOMY.startingFood ?? 0;
@@ -89,6 +100,18 @@ export function newGame() {
 export const idx = (gx, gy) => gy * S.grid.cols + gx;
 export const inBounds = (gx, gy) => gx >= 0 && gy >= 0 && gx < S.grid.cols && gy < S.grid.rows;
 export const cellAt = (gx, gy) => (inBounds(gx, gy) ? S.grid.cells[idx(gx, gy)] : null);
+// Only the owned land (which grows as you buy property) is buildable.
+export const inLand = (gx, gy) => gx >= 0 && gy >= 0 && gx < S.land.cols && gy < S.land.rows;
+
+// Center the camera on the owned land so it fits the viewport.
+export function fitCamToLand() {
+  const t = C.GRID.tile;
+  const lw = S.land.cols * t, lh = S.land.rows * t;
+  const z = Math.min(C.VIEW.w / lw, C.VIEW.h / lh);
+  S.cam.zoom = clamp(z, 0.3, 2.2);
+  S.cam.x = (lw - C.VIEW.w / S.cam.zoom) / 2;
+  S.cam.y = (lh - C.VIEW.h / S.cam.zoom) / 2;
+}
 
 // ---- lookups by id ------------------------------------------------------
 export const dogById = (id) => S.dogs.find((d) => d.id === id) || null;
@@ -144,6 +167,20 @@ export function loadGame() {
     S.ui = uiBackup;      // always start with a clean UI shell
     S.fx = [];
     S.paused = false;
+    // ---- migrate older saves to the current (bigger) world + new fields ----
+    if (!S.grid || S.grid.cols !== C.GRID.cols || S.grid.rows !== C.GRID.rows) {
+      S.grid = buildGrid();
+      for (const b of (S.buildings || [])) {
+        for (let y = b.gy; y < b.gy + b.h; y++) for (let x = b.gx; x < b.gx + b.w; x++) { const c = cellAt(x, y); if (c) { c.occupant = b.id; if (b.key === 'path_tile') c.terrain = 'path'; } }
+      }
+    }
+    if (!S.land || !S.land.cols) { S.landLevel = S.landLevel || 0; S.land = { cols: C.PROPERTY[S.landLevel].cols, rows: C.PROPERTY[S.landLevel].rows }; }
+    if (!S.cam) S.cam = { x: 0, y: 0, zoom: 1 };
+    if (!S.loan) S.loan = { owed: 0, missedDays: 0 };
+    if (S.coachStep === undefined) S.coachStep = -1;
+    if (S.won === undefined) S.won = false;
+    if (S.lastAutoBreedDay === undefined) S.lastAutoBreedDay = 0;
+    fitCamToLand();
     S.ui.dirty = true;
     return true;
   } catch (e) { console.warn('load failed', e); return false; }

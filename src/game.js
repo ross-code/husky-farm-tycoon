@@ -3,13 +3,13 @@
 
 import { S, newGame, loadGame, hasSave, saveGame, toast } from './state.js';
 import * as C from './config.js';
-import { tickEconomy, dailyUpkeep, computeAppeal } from './economy.js';
-import { tickDogs, dailyHealthCheck } from './dogs.js';
+import { tickEconomy, dailyUpkeep, computeAppeal, dailyRevenue } from './economy.js';
+import { tickDogs, dailyHealthCheck, autoBreedTick } from './dogs.js';
 import { tickMissions, rollAvailable } from './missions.js';
 import { tickEntities } from './entities.js';
 import { initRender, render } from './render.js';
 import { initInput } from './input.js';
-import { initUI, refreshUI, refreshHud, renderToasts } from './ui.js';
+import { initUI, refreshUI, refreshHud, renderToasts, showVictory } from './ui.js';
 
 const DAY = () => C.ECONOMY.dayLengthSeconds;
 let last = 0, running = false, autosaveAcc = 0;
@@ -17,8 +17,17 @@ let last = 0, running = false, autosaveAcc = 0;
 function onNewDay() {
   dailyUpkeep();
   dailyHealthCheck();
+  autoBreedTick();
   rollAvailable();
   saveGame();
+}
+
+function checkWin() {
+  if (S.won) return;
+  if (S.stats.serumWon || dailyRevenue() >= C.WIN.dailyRevenue) {
+    S.won = true; S.ui.dirty = true;
+    showVictory(S.stats.serumWon ? 'serum' : 'revenue');
+  }
 }
 
 function checkMilestones() {
@@ -50,23 +59,25 @@ function advance(dt) {
   tickMissions(dt);
   tickEntities(dt);
   checkMilestones();
+  checkWin();
 }
 
 function loop(now) {
   if (!running) return;
   const dt = Math.min((now - last) / 1000, 0.25);
   last = now;
-
-  if (S.started && !S.paused) advance(dt * (S.speed || 1));
-
-  render(now);
-  if (S.ui.dirty) refreshUI(); else refreshHud();
-  renderToasts(dt);
-
-  // periodic autosave (every ~20s of real time)
-  autosaveAcc += dt;
-  if (autosaveAcc > 20) { autosaveAcc = 0; if (S.started) saveGame(); }
-
+  // A bug in one frame must never kill the loop (which would freeze the whole UI,
+  // including the tabs). Catch, log once-ish, and keep going.
+  try {
+    if (S.started && !S.paused) advance(dt * (S.speed || 1));
+    render(now);
+    if (S.ui.dirty) refreshUI(); else refreshHud();
+    renderToasts(dt);
+    autosaveAcc += dt;
+    if (autosaveAcc > 20) { autosaveAcc = 0; if (S.started) saveGame(); }
+  } catch (e) {
+    console.error('loop frame error', e);
+  }
   requestAnimationFrame(loop);
 }
 
