@@ -32,46 +32,71 @@ function unlockHint(kind, key) {
 }
 
 // ======================================================================
-// TOP BAR
+// TOP BAR + BOTTOM TABS
+// Built ONCE, then updated in place. Rebuilding innerHTML every frame
+// destroyed the button under the cursor between mousedown and mouseup, so
+// real mouse clicks on the speed/pause/tab buttons never fired.
 // ======================================================================
-function renderTop() {
-  const cap = dogCapacity();
-  const net = netPerDay();
-  const dayIco = S.time.tod < 0.06 ? '🌅' : S.time.tod < C.ECONOMY.dayFraction ? '☀️' : '🌙';
-  const foodLow = S.food < S.dogs.length * C.ECONOMY.foodPerDogPerDay;
-  const sp = (n, label) => `<button class="btn btn-sm ${(!S.paused && S.speed === n) ? 'btn-primary' : ''}" data-act="speed:${n}">${label}</button>`;
+let chromeBuilt = false;
+function buildChrome() {
   $('topbar').innerHTML = `
     <div class="title">🐺 Husky Farm <span class="pawn">Tycoon</span></div>
-    <div class="chip money"><span class="chip-ico">💰</span><span class="chip-val">${fmtMoney(S.cash)}</span></div>
-    <div class="chip"><span class="chip-ico">⭐</span><span class="chip-val">${Math.round(S.reputation)}</span><span class="chip-label">rep</span></div>
-    <div class="chip"><span class="chip-ico">✨</span><span class="chip-val">${Math.round(S.appeal)}</span><span class="chip-label">appeal</span></div>
-    <div class="chip"><span class="chip-ico">🐶</span><span class="chip-val" style="color:${S.dogs.length > cap ? 'var(--bad)' : S.dogs.length === cap ? 'var(--warn)' : 'inherit'}">${S.dogs.length}/${cap}</span></div>
-    <div class="chip"><span class="chip-ico">🦴</span><span class="chip-val" style="color:${foodLow ? 'var(--warn)' : 'inherit'}">${Math.round(S.food)}</span><button class="btn btn-sm" data-act="buyfood" title="Buy ${C.ECONOMY.foodBuyBatch} food">+food</button></div>
-    <div class="chip"><span class="chip-ico">${dayIco}</span><span class="chip-val">Day ${S.time.day}</span></div>
-    <div class="chip" title="Net cash per day at current farm"><span class="chip-ico">📈</span><span class="chip-val" style="color:${net >= 0 ? 'var(--good)' : 'var(--bad)'}">${net >= 0 ? '+' : ''}${fmtMoney(net)}/d</span></div>
+    <div class="chip money"><span class="chip-ico">💰</span><span class="chip-val" id="hud-cash"></span></div>
+    <div class="chip"><span class="chip-ico">⭐</span><span class="chip-val" id="hud-rep"></span><span class="chip-label">rep</span></div>
+    <div class="chip"><span class="chip-ico">✨</span><span class="chip-val" id="hud-appeal"></span><span class="chip-label">appeal</span></div>
+    <div class="chip"><span class="chip-ico">🐶</span><span class="chip-val" id="hud-dogs"></span></div>
+    <div class="chip"><span class="chip-ico">🦴</span><span class="chip-val" id="hud-food"></span><button class="btn btn-sm" data-act="buyfood" title="Buy ${C.ECONOMY.foodBuyBatch} food">+food</button></div>
+    <div class="chip"><span class="chip-ico" id="hud-dayico">☀️</span><span class="chip-val" id="hud-day"></span></div>
+    <div class="chip" title="Net cash per day at current farm"><span class="chip-ico">📈</span><span class="chip-val" id="hud-net"></span></div>
     <div class="spacer"></div>
     <div class="row">
-      <button class="btn btn-sm ${S.paused ? 'btn-primary' : ''}" data-act="pause" title="Space">⏸</button>
-      ${sp(1, '▶')}${sp(2, '▶▶')}${sp(3, '▶▶▶')}
+      <button class="btn btn-sm" data-act="pause" id="spd-pause" title="Pause (Space)">⏸</button>
+      <button class="btn btn-sm" data-act="speed:1" id="spd-1" title="1x speed">▶</button>
+      <button class="btn btn-sm" data-act="speed:2" id="spd-2" title="2x speed">▶▶</button>
+      <button class="btn btn-sm" data-act="speed:3" id="spd-3" title="3x speed">▶▶▶</button>
       <button class="btn btn-sm" data-act="help" title="How to play">？</button>
       <button class="btn btn-sm" data-act="save" title="Save (auto every day)">💾</button>
       <button class="btn btn-sm" data-act="reset" title="New farm">↻</button>
     </div>`;
+  $('bottombar').innerHTML = `
+    <button class="tab" data-act="panel:build" id="tab-build"><span class="ico">🏗️</span>Build</button>
+    <button class="tab" data-act="panel:dogs" id="tab-dogs"><span class="ico">🐶</span>Dogs<span class="badge" id="badge-dogs" style="display:none">!</span></button>
+    <button class="tab" data-act="panel:market" id="tab-market"><span class="ico">🛒</span>Market</button>
+    <button class="tab" data-act="panel:missions" id="tab-missions"><span class="ico">🛷</span>Missions<span class="badge" id="badge-missions" style="display:none"></span></button>`;
+  chromeBuilt = true;
 }
 
-// ======================================================================
-// BOTTOM TABS
-// ======================================================================
-function renderTabs() {
+const txt = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+const tip = (id, on, cls = 'btn-primary') => { const e = $(id); if (e) e.classList.toggle(cls, on); };
+
+// Update HUD values + active states in place (no element replacement → clicks survive).
+function updateChrome() {
+  if (!chromeBuilt) buildChrome();
+  const cap = dogCapacity(), net = netPerDay();
+  txt('hud-cash', fmtMoney(S.cash));
+  txt('hud-rep', Math.round(S.reputation));
+  txt('hud-appeal', Math.round(S.appeal));
+  const dEl = $('hud-dogs'); if (dEl) { dEl.textContent = `${S.dogs.length}/${cap}`; dEl.style.color = S.dogs.length > cap ? 'var(--bad)' : S.dogs.length === cap ? 'var(--warn)' : ''; }
+  const fLow = S.food < S.dogs.length * C.ECONOMY.foodPerDogPerDay; const fEl = $('hud-food'); if (fEl) { fEl.textContent = Math.round(S.food); fEl.style.color = fLow ? 'var(--warn)' : ''; }
+  txt('hud-dayico', S.time.tod < 0.06 ? '🌅' : S.time.tod < C.ECONOMY.dayFraction ? '☀️' : '🌙');
+  txt('hud-day', `Day ${S.time.day}`);
+  const nEl = $('hud-net'); if (nEl) { nEl.textContent = `${net >= 0 ? '+' : ''}${fmtMoney(net)}/d`; nEl.style.color = net >= 0 ? 'var(--good)' : 'var(--bad)'; }
+  tip('spd-pause', S.paused);
+  tip('spd-1', !S.paused && S.speed === 1);
+  tip('spd-2', !S.paused && S.speed === 2);
+  tip('spd-3', !S.paused && S.speed === 3);
+  for (const k of ['build', 'dogs', 'market', 'missions']) tip('tab-' + k, S.ui.panel === k, 'active');
   const needCare = S.dogs.some((d) => d.hunger < 30 || d.health < 35 || (d.energy < 25 && !d.missionId));
-  const active = S.missions.active.length;
-  const tab = (key, ico, label, badge) =>
-    `<button class="tab ${S.ui.panel === key ? 'active' : ''}" data-act="panel:${key}"><span class="ico">${ico}</span>${label}${badge ? `<span class="badge">${badge}</span>` : ''}</button>`;
-  $('bottombar').innerHTML =
-    tab('build', '🏗️', 'Build') +
-    tab('dogs', '🐶', 'Dogs', needCare ? '!' : '') +
-    tab('market', '🛒', 'Market') +
-    tab('missions', '🛷', 'Missions', active ? active : '');
+  const bd = $('badge-dogs'); if (bd) bd.style.display = needCare ? '' : 'none';
+  const active = S.missions.active.length; const bm = $('badge-missions'); if (bm) { bm.textContent = active || ''; bm.style.display = active ? '' : 'none'; }
+  // Live mission timers/progress (elements persist between dirty refreshes).
+  if (S.ui.panel === 'missions') {
+    for (const inst of S.missions.active) {
+      const st = missionStatus(inst);
+      const t = $('msn-time-' + inst.id); if (t) t.textContent = fmtTime(st.remaining);
+      const b = $('msn-bar-' + inst.id); if (b) b.style.width = `${Math.round(st.pct * 100)}%`;
+    }
+  }
 }
 
 // ======================================================================
@@ -205,8 +230,8 @@ function missionsPanel() {
     for (const inst of S.missions.active) {
       const def = C.MISSIONS[inst.key]; const st = missionStatus(inst);
       const team = inst.dogIds.map((id) => S.dogs.find((d) => d.id === id)?.name || '?').join(', ');
-      body += `<div class="card"><div class="row"><b>🛷 ${def.name}</b><span class="spacer"></span><span class="muted">${fmtTime(st.remaining)}</span></div>
-        <div class="bar" style="margin:6px 0"><div class="bar-fill prog" style="width:${Math.round(st.pct * 100)}%"></div></div>
+      body += `<div class="card"><div class="row"><b>🛷 ${def.name}</b><span class="spacer"></span><span class="muted" id="msn-time-${inst.id}">${fmtTime(st.remaining)}</span></div>
+        <div class="bar" style="margin:6px 0"><div class="bar-fill prog" id="msn-bar-${inst.id}" style="width:${Math.round(st.pct * 100)}%"></div></div>
         <div class="muted">Team: ${esc(team)}</div></div>`;
     }
   }
@@ -270,12 +295,11 @@ function renderModal() {
 }
 
 // ---- public -------------------------------------------------------------
-export function refreshHud() { ensureUiState(); renderTop(); renderTabs(); }
+export function refreshHud() { ensureUiState(); updateChrome(); }
 
 export function refreshUI() {
   ensureUiState();
-  renderTop();
-  renderTabs();
+  updateChrome();
   const host = $('sidebar');
   switch (S.ui.panel) {
     case 'dogs': host.innerHTML = dogsPanel(); break;
